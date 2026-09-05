@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# phonelink — one front-end for Android <-> Linux on Omarchy/Hyprland.
+#
+# This is glue, not a protocol. The heavy lifting belongs to tools that already
+# do it well:
+#   KDE Connect  notifications, SMS, clipboard, media keys, file share, find-my-phone
+#   scrcpy       screen mirroring, control, virtual displays
+#   LocalSend    AirDrop-style transfers to anything on the LAN
+#   adb          wireless setup, file moves
+#
+# What it adds is the part none of them do: a single command that knows which
+# device you mean, remembers your wireless endpoint, and fails with the exact
+# fix instead of a stack trace.
+
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/phonelink"
+DEVICE_FILE="$STATE_DIR/adb-device"
+mkdir -p "$STATE_DIR"
+
+PKGS=(kdeconnect scrcpy android-tools)
+
+c_red=$'\033[31m'; c_yel=$'\033[33m'; c_cya=$'\033[36m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
+[[ -t 1 ]] || { c_red=; c_yel=; c_cya=; c_dim=; c_off=; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Launched from the Omarchy menu there is no terminal, so anything written to
+# stderr is simply lost. Mirror it to the notification bar instead.
+gui() { [[ ! -t 2 ]] && have notify-send; }
+note() { gui && notify-send -a phonelink "$1" "$2"; return 0; }
+
+die()  { printf '%serror:%s %s\n' "$c_red" "$c_off" "$*" >&2; note "phonelink failed" "$*"; exit 1; }
+info() { printf '%s::%s %s\n' "$c_cya" "$c_off" "$*" >&2; }
+warn() { printf '%swarn:%s %s\n' "$c_yel" "$c_off" "$*" >&2; }
+ok()   { info "$*"; note "phonelink" "$*"; return 0; }
+
+need() {
+  local c missing=()
+  for c in "$@"; do have "$c" || missing+=("$c"); done
+  (( ${#missing[@]} == 0 )) && return 0
+  printf '%smissing:%s %s\n' "$c_red" "$c_off" "${missing[*]}" >&2
+  printf 'install everything phonelink uses with:\n\n  omarchy pkg add %s\n\n' "${PKGS[*]}" >&2
+  note "phonelink: ${missing[*]} not installed" "Run: omarchy pkg add ${PKGS[*]}"
+  exit 1
+}
+
+# The Omarchy menu runs actions with no terminal attached, so a subcommand that
+# prints or prompts would vanish. Those relaunch themselves in a real terminal.
+reexec_tty() {
+  [[ -t 1 ]] && return 0
+  have omarchy-launch-or-focus-tui || return 0
+  exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
+    "bash -c 'phonelink $*; printf \"\\n[any key to close]\"; read -rsn1'"
+}
+
+# ---------------------------------------------------------------- adb devices
+
+adb_serials() { adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'; }
+
+# Echo one usable serial. Prefers a live device; falls back to reconnecting the
+# wireless endpoint we last saw, which is the common case after a reboot.
+adb_pick() {
+  local d=() remembered
+  mapfile -t d < <(adb_serials)
+  if (( ${#d[@]} == 1 )); then printf '%s\n' "${d[0]}"; return 0; fi
+  if (( ${#d[@]} > 1 )); then
+    if have fzf && [[ -t 0 ]]; then
+      printf '%s\n' "${d[@]}" | fzf --prompt='device> ' --height='~40%' --no-multi
+    else
+      printf '%s\n' "${d[0]}"
+    fi
+    return 0
+  fi
+  if [[ -s $DEVICE_FILE ]]; then
+    remembered=$(<"$DEVICE_FILE")
+    info "nothing attached — trying remembered $remembered"
+    if adb connect "$remembered" 2>&1 | grep -qiE 'connected to'; then
+      printf '%s\n' "$remembered"; return 0
+    fi
+  fi
+  return 1
+}
+
+require_device() {
+  local s
+  s=$(adb_pick) || die "no Android device.
+  USB:      plug the cable in and accept the debugging prompt
+  Wireless: phonelink wifi"
+  printf '%s\n' "$s"
+}
+
+# ------------------------------------------------------------ kde connect ids
+
+kde_device() { kdeconnect-cli --list-available --id-only 2>/dev/null | head -1; }
+
+require_kde() {
+  local d
+  need kdeconnect-cli
+  d=$(kde_device)
+  [[ -n $d ]] || die "no paired, reachable KDE Connect device.
+  Pair it with:  phonelink kde
+  Both ends must be on the same network."
+  printf '%s\n' "$d"
+}
+
+# ------------------------------------------------------------------- commands
+
+cmd_status() {
+  reexec_tty status
+  local ok=1 c
+  printf '%sdependencies%s\n' "$c_dim" "$c_off"
+  for c in kdeconnect-cli scrcpy adb localsend; do
+    if have "$c"; then printf '  %-16s ok\n' "$c"
+    else printf '  %-16s %smissing%s\n' "$c" "$c_red" "$c_off"; ok=0; fi
+  done
+
+  printf '\n%sKDE Connect%s\n' "$c_dim" "$c_off"
+  if have kdeconnect-cli; then
+    local avail; avail=$(kdeconnect-cli --list-available 2>/dev/null | grep -v '^0 device' || true)
+    if [[ -n $avail ]]; then printf '%s\n' "$avail" | sed 's/^/  /'
+    else printf '  no reachable device (paired devices may be offline)\n'; fi
+  else
+    printf '  not installed\n'
+  fi
+
+  printf '\n%sadb / scrcpy%s\n' "$c_dim" "$c_off"
+  if have adb; then
+    local serials=(); mapfile -t serials < <(adb_serials)
+    if (( ${#serials[@]} )); then
+      local s
+      for s in "${serials[@]}"; do
+        local model batt
+        model=$(adb -s "$s" shell getprop ro.product.model 2>/dev/null | tr -d '\r' || true)
+        batt=$(adb -s "$s" shell dumpsys battery 2>/dev/null | awk -F': ' '/ level/{print $2; exit}' | tr -d '\r' || true)
+        printf '  %-24s %s%s\n' "$s" "${model:-unknown}" "${batt:+  ${batt}%}"
+      done
+    else
+      printf '  no device attached\n'
+      [[ -s $DEVICE_FILE ]] && printf '  remembered wireless endpoint: %s\n' "$(<"$DEVICE_FILE")"
+    fi
+  else
+    printf '  not installed\n'
+  fi
+  (( ok )) || { printf '\ninstall the missing pieces:\n  omarchy pkg add %s\n' "${PKGS[*]}"; return 1; }
+}
+
+cmd_mirror() {
+  need scrcpy adb
+  local serial extra=()
+  serial=$(require_device)
+  read -r -a extra <<<"${PHONELINK_SCRCPY_ARGS:---stay-awake}"
+  info "mirroring $serial"
+  exec scrcpy -s "$serial" --window-title="Phone" "${extra[@]}" "$@"
+}
+
+# A virtual display is the reason to bother with scrcpy at all: the app gets its
+# own screen at desktop proportions, and the phone stays usable in your hand.
+cmd_desk() {
+  need scrcpy adb
+  local serial size app args=()
+  serial=$(require_device)
+  size="${PHONELINK_DISPLAY_SIZE:-1600x900/220}"
+  app="${1-}"
+  if [[ -z $app ]] && have fzf && [[ -t 0 ]]; then
+    app=$(list_apps "$serial" | fzf --prompt='app (empty = plain display)> ' --height='~60%' --no-multi | awk '{print $NF}' || true)
+  fi
+  args=(-s "$serial" --new-display="$size" --window-title="Phone desk")
+  [[ -n $app ]] && args+=(--start-app="$app")
+  info "new virtual display $size${app:+, launching $app}"
+  exec scrcpy "${args[@]}"
+}
+
+list_apps() {
+  local serial="$1"
+  scrcpy -s "$serial" --list-apps 2>/dev/null | sed -n 's/^ *[*-] *//p' | grep . && return 0
+  adb -s "$serial" shell pm list packages -3 2>/dev/null | tr -d '\r' | sed 's/^package://' | sort
+}
+
+cmd_apps() { reexec_tty apps; need scrcpy adb; list_apps "$(require_device)"; }
+
+cmd_wifi() {
+  reexec_tty wifi
+  need adb
+  adb start-server >/dev/null 2>&1 || true
+
+  local existing usb ip
+  existing=$(adb_serials | grep -m1 ':' || true)
+  if [[ -n $existing ]]; then
+    printf '%s\n' "$existing" > "$DEVICE_FILE"
+    info "already wireless: $existing"
+    return 0
+  fi
+
+  # A cable, if present, is the painless route: no pairing code needed.
+  usb=$(adb_serials | grep -m1 -v ':' || true)
+  if [[ -n $usb ]]; then
+    info "found $usb over USB — switching it to wireless"
+    ip=$(adb -s "$usb" shell ip route 2>/dev/null | tr -d '\r' | awk '/wlan[0-9]/ && /src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+    [[ -n $ip ]] || ip=$(adb -s "$usb" shell ip -4 addr show wlan0 2>/dev/null | tr -d '\r' | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')
+    [[ -n $ip ]] || die "could not read the phone's Wi-Fi address — is Wi-Fi on?"
+    adb -s "$usb" tcpip 5555 >/dev/null
+    sleep 2
+    adb connect "$ip:5555" | sed 's/^/  /'
+    printf '%s\n' "$ip:5555" > "$DEVICE_FILE"
+    info "remembered $ip:5555 — you can unplug the cable now"
+    return 0
+  fi
+
+  warn "no device over USB; falling back to wireless debugging (needs a one-time pair)"
+  cmd_pair
+}
+
+cmd_pair() {
+  reexec_tty pair
+  need adb
+  [[ -t 0 ]] || die "pairing is interactive — run 'phonelink pair' in a terminal"
+  cat >&2 <<'EOS'
+
+On the phone:
+  Settings -> System -> Developer options -> Wireless debugging   (turn ON)
+  then tap "Pair device with pairing code"
+
+Leave that dialog open. It shows an IP:PORT and a 6-digit code.
+
+EOS
+  local addr code conn found yn
+  found=$(adb mdns services 2>/dev/null | awk '/_adb-tls-pairing/ {print $NF; exit}' || true)
+  if [[ -n $found ]]; then
+    read -rp "found a pairing endpoint at $found — use it? [Y/n] " yn
+    [[ ${yn,,} == n* ]] || addr=$found
+  fi
+  [[ -n ${addr:-} ]] || read -rp "pairing IP:PORT (from the dialog): " addr
+  [[ -n ${addr:-} ]] || die "no address given"
+  read -rp "6-digit pairing code: " code
+  adb pair "$addr" "$code" || die "pairing failed — the code expires fast, try again"
+
+  # The connect port is NOT the pairing port. This trips up everyone.
+  conn=$(adb mdns services 2>/dev/null | awk '/_adb-tls-connect/ {print $NF; exit}' || true)
+  [[ -n $conn ]] || read -rp "connect IP:PORT (shown on the Wireless debugging screen): " conn
+  adb connect "$conn" | sed 's/^/  /'
+  printf '%s\n' "$conn" > "$DEVICE_FILE"
+  info "remembered $conn"
+}
+
+cmd_send() {
+  local dev f files=()
+  if (( $# )); then
+    files=("$@")
+  elif have omarchy-file-select; then
+    mapfile -t files < <(omarchy-file-select --title "Send to phone" --multiple)
+    (( ${#files[@]} )) || return 0   # chooser cancelled
+  else
+    die "usage: phonelink send <file> [file...]"
+  fi
+  dev=$(require_kde)
+  local sent=0
+  for f in "${files[@]}"; do
+    [[ -e $f ]] || { warn "skipping missing $f"; continue; }
+    kdeconnect-cli -d "$dev" --share "$(realpath "$f")" && (( ++sent ))
+  done
+  (( sent )) && ok "sent $sent file(s) to the phone"
+}
+
+cmd_ring() { kdeconnect-cli -d "$(require_kde)" --ring && ok "ringing your phone"; }
+
+cmd_clip() {
+  local dev; dev=$(require_kde)
+  kdeconnect-cli -d "$dev" --send-clipboard 2>/dev/null && { ok "clipboard pushed"; return 0; }
+  have wl-paste || die "this kdeconnect has no --send-clipboard and wl-clipboard is not installed"
+  kdeconnect-cli -d "$dev" --share-text "$(wl-paste)" && ok "clipboard pushed as text"
+}
+
+cmd_pull() {
+  need adb
+  (( $# )) || die "usage: phonelink pull <path-on-phone> [local-dest]"
+  local serial; serial=$(require_device)
+  adb -s "$serial" pull "$1" "${2:-$PWD}"
+}
+
+cmd_push() {
+  need adb
+  (( $# )) || die "usage: phonelink push <local-file> [path-on-phone]"
+  local serial; serial=$(require_device)
+  adb -s "$serial" push "$1" "${2:-/sdcard/Download/}"
+}
+
+launch() { if have uwsm-app; then uwsm-app -- "$@"; else "$@"; fi; }
+
+cmd_kde()  { need kdeconnect-app; launch kdeconnect-app; }
+cmd_sms()  { need kdeconnect-sms; launch kdeconnect-sms; }
+cmd_drop() { need localsend; launch localsend; }
+
+cmd_menu() {
+  reexec_tty menu
+  have fzf || die "the menu needs fzf"
+  local choice
+  choice=$(printf '%s\n' \
+    'status   what is connected right now' \
+    'mirror   mirror and control the phone screen' \
+    'desk     run one app on its own virtual display' \
+    'send     share a file to the phone' \
+    'drop     LocalSend (send to anything on the LAN)' \
+    'ring     find my phone' \
+    'clip     push clipboard to the phone' \
+    'wifi     set up or reconnect wireless adb' \
+    'kde      open KDE Connect (pairing, SMS, settings)' \
+    | fzf --prompt='phonelink> ' --height='~50%' --no-multi) || return 0
+  main "${choice%% *}"
+}
+
+cmd_help() {
+  cat <<'EOS'
+phonelink — Android on your Linux desktop
+
+  status            what is connected right now, and what is missing
+  mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
+  desk [package]    run one app on its own virtual display; picks with fzf if omitted
+  apps              list launchable app packages
+  wifi              switch to / reconnect wireless adb, and remember it
+  pair              Android 11+ wireless-debugging pairing walkthrough
+  send <files...>   share files to the phone via KDE Connect
+  pull <remote> [d] copy a file off the phone
+  push <local> [d]  copy a file onto the phone
+  ring              make the phone ring
+  clip              push the desktop clipboard to the phone
+  kde               open KDE Connect (pairing, SMS, notification settings)
+  sms               open the KDE Connect SMS window
+  drop              open LocalSend
+  menu              fzf picker for all of the above
+
+Environment:
+  PHONELINK_SCRCPY_ARGS    default scrcpy args for `mirror`  (default: --stay-awake)
+  PHONELINK_DISPLAY_SIZE   virtual display for `desk`        (default: 1600x900/220)
+EOS
+}
+
+main() {
+  case "${1-menu}" in
+    status)        shift; cmd_status "$@" ;;
+    mirror|mir)    shift; cmd_mirror "$@" ;;
+    desk|display)  shift; cmd_desk "$@" ;;
+    apps)          shift; cmd_apps "$@" ;;
+    wifi|wireless) shift; cmd_wifi "$@" ;;
+    pair)          shift; cmd_pair "$@" ;;
+    send|share)    shift; cmd_send "$@" ;;
+    pull)          shift; cmd_pull "$@" ;;
+    push)          shift; cmd_push "$@" ;;
+    ring|find)     shift; cmd_ring "$@" ;;
+    clip|clipboard) shift; cmd_clip "$@" ;;
+    kde)           shift; cmd_kde "$@" ;;
+    sms)           shift; cmd_sms "$@" ;;
+    drop|localsend) shift; cmd_drop "$@" ;;
+    menu)          shift; cmd_menu "$@" ;;
+    -h|--help|help) cmd_help ;;
+    *) die "unknown command: $1  (try: phonelink --help)" ;;
+  esac
+}
+
+main "$@"
