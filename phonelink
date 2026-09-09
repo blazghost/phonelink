@@ -30,6 +30,15 @@ PKGS=(kdeconnect scrcpy android-tools)
 c_red=$'\033[31m'; c_yel=$'\033[33m'; c_cya=$'\033[36m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 [[ -t 1 ]] || { c_red=; c_yel=; c_cya=; c_dim=; c_off=; }
 
+# Omarchy exports a GUM_* palette derived from whatever theme is active, so
+# borrowing it keeps this in step with theme changes instead of pinning one
+# theme's hexes. The fallbacks are plain ANSI, for non-Omarchy systems.
+ui_accent="${GUM_INPUT_PROMPT_FOREGROUND:-3}"
+ui_text="${GUM_INPUT_HEADER_FOREGROUND:-7}"
+ui_muted="${GUM_INPUT_PLACEHOLDER_FOREGROUND:-8}"
+ui_sel_bg="${GUM_FILTER_SELECTED_BACKGROUND:-238}"
+ui_sel_fg="${GUM_FILTER_SELECTED_FOREGROUND:-15}"
+
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Launched from the Omarchy menu there is no terminal, so anything written to
@@ -301,7 +310,10 @@ cmd_reply() {
   else
     local pick
     pick=$(printf '%s' "$json" | jq -r '.[] | "\(.path)\t\(.app) — \(.title): \(.text)"' \
-      | fzf --delimiter='\t' --with-nth=2.. --prompt='reply to> ' --height='~40%' --no-multi) || return 0
+      | fzf --delimiter='\t' --with-nth=2.. --no-multi --height='~100%' \
+            --border=rounded --border-label=' waiting ' --padding='0,1' \
+            --prompt='  󰍉  ' --pointer='❯' --marker='❯' \
+            --color="fg:$ui_text,hl:$ui_accent,fg+:$ui_sel_fg,bg+:$ui_sel_bg,hl+:$ui_accent,prompt:$ui_accent,pointer:$ui_accent,border:$ui_muted,label:$ui_muted,info:$ui_muted") || return 0
     path=${pick%%$'\t'*}
   fi
 
@@ -318,11 +330,13 @@ cmd_reply() {
   if (( direct )); then
     msg="$*"
   else
-    show_incoming "$label" "$body"
+    show_incoming "$title" "$app" "$body"
     if have gum; then
-      msg=$(gum input --placeholder="your reply to $title" --width=70) || return 0
+      # gum picks the prompt/cursor/placeholder colours out of the GUM_INPUT_*
+      # environment Omarchy sets, so it is already themed.
+      msg=$(gum input --prompt "  ❯ " --placeholder "reply to $title…" --width 70) || return 0
     else
-      read -rp "reply: " msg
+      read -rp "  reply: " msg
     fi
   fi
   [[ -n ${msg//[[:space:]]/} ]] || { warn "empty reply, nothing sent"; return 0; }
@@ -331,16 +345,23 @@ cmd_reply() {
   ok "replied to $label"
 }
 
-# The message being answered stays on screen while you type it. Without this
-# you get a bare input box and have to remember what was said.
+# The message being answered stays on screen while you type it. Without this you
+# get a bare input box and have to remember what was said. Colours come from the
+# active theme, so it reads as part of the desktop rather than a shell script.
 show_incoming() {
-  local who="$1" body="${2:-}"
+  local who="$1" app="${2:-}" body="${3:-}"
   [[ -n ${body//[[:space:]]/} ]] || body="(no preview text — check the phone)"
   if have gum; then
-    gum style --border rounded --border-foreground 240 --padding "0 1" --margin "1 0" \
-      "$(gum style --bold "$who")" "$body"
+    printf '\n'
+    # gum drops colour when its output is captured rather than written to a
+    # terminal, which is exactly what command substitution does -- so force it.
+    gum join --horizontal \
+      "$(CLICOLOR_FORCE=1 gum style --foreground "$ui_accent" --bold "  󰭹  $who")" \
+      "$(CLICOLOR_FORCE=1 gum style --foreground "$ui_muted" "  ·  $app")"
+    gum style --border rounded --border-foreground "$ui_muted" --foreground "$ui_text" \
+      --padding "0 1" --margin "0 0 0 2" --width 64 "$body"
   else
-    printf '\n%s%s%s\n  %s\n\n' "$c_cya" "$who" "$c_off" "$body"
+    printf '\n  %s%s%s  ·  %s\n\n  %s\n\n' "$c_cya" "$who" "$c_off" "$app" "$body"
   fi
 }
 

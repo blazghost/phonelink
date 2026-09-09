@@ -1,0 +1,14 @@
+
+-- phonelink: the reply panel is a transient prompt, not a window you work in.
+-- Tiled it claims a whole column and leaves most of it empty, so float it,
+-- centre it, and keep it just big enough for the message and the input.
+-- Fully opaque: Omarchy's default translucency lets whatever is behind show
+-- straight through an unblurred floating window, and you cannot read a message
+-- with someone else's terminal underneath it.
+o.window("^(org\\.omarchy\\.phonelink)$", {
+  float = true,
+  center = true,
+  size = { 900, 180 },
+  tag = "-default-opacity",
+  opacity = "1 1",
+})

@@ -96,6 +96,17 @@ and answers the newest one, which is what makes it useful on a keybind.
 Under the hood this is `sendReply()` on kdeconnectd's D-Bus objects; see
 `lib/kdeconnect-notify.py`. Nothing reimplements KDE Connect's protocol.
 
+### Theming
+
+The reply panel takes its colours from the `GUM_*` environment Omarchy exports
+for the active theme — accent, foreground, muted and selection — so it follows
+`omarchy theme set` instead of pinning one palette. Off Omarchy, or with those
+variables unset, it falls back to plain ANSI colours.
+
+It opens as a floating, centred, fully opaque panel. Opaque on purpose: a
+floating window under Omarchy's default translucency shows whatever is behind
+it unblurred, and a message is not readable through another terminal.
+
 ## Tuning
 
 ```sh
