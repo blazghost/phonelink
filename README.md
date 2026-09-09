@@ -52,6 +52,8 @@ plain bash and works on any Linux with the four tools installed.
 `SUPER + SHIFT + L` opens the Phone section of the Omarchy menu. From a shell:
 
 ```
+phonelink reply             answer a phone notification from the desktop
+phonelink reply "on my way" straight to the newest one, no prompt
 phonelink status            what is connected right now, and what is missing
 phonelink mirror            mirror and control the phone screen
 phonelink desk [package]    run one app on its own virtual display
@@ -70,6 +72,29 @@ phonelink kde / sms         KDE Connect windows
 display via scrcpy's virtual display, so the app is a normal window on your
 screen while the phone stays usable in your hand.
 
+## Replying to notifications
+
+Android attaches a reply box to any notification you could answer from the
+phone's own shade — messengers, SMS. KDE Connect carries that through, so the
+message can be answered from the desktop and lands in the app as if you had
+typed it on the phone. Feed and news apps offer no reply box, so they never
+appear here.
+
+There are two ways in, because they fail in different situations:
+
+- **Click *Reply* on the notification.** This already worked, but the window it
+  opens tiles by default, so answering a message rearranged your whole
+  workspace. `install.sh` adds a rule that floats and centres it.
+- **`SUPER + SHIFT + R`**, or `phonelink reply`. Notification popups are
+  transient; once one has gone you can no longer click it. This lists every
+  conversation still waiting, so it works minutes later.
+
+Given text directly — `phonelink reply "five minutes"` — it skips the picker
+and answers the newest one, which is what makes it useful on a keybind.
+
+Under the hood this is `sendReply()` on kdeconnectd's D-Bus objects; see
+`lib/kdeconnect-notify.py`. Nothing reimplements KDE Connect's protocol.
+
 ## Tuning
 
 ```sh
@@ -82,6 +107,10 @@ PHONELINK_DISPLAY_SIZE='1920x1080/240'                   # geometry for `desk`
 `install.sh` applies these, keeping a timestamped `.bak.*` of each:
 
 - `~/.config/omarchy/extensions/omarchy-menu.jsonc` — the Phone menu section
-- `~/.config/hypr/bindings.lua` — `SUPER + SHIFT + L`
+- `~/.config/hypr/bindings.lua` — `SUPER + SHIFT + L` (menu), `SUPER + SHIFT + R` (reply)
 - `~/.config/hypr/hyprland.lua` — scrcpy window rules: fully opaque and unblurred
-  (it is video), and no idle-lock while it has focus
+  (it is video), and no idle-lock while it has focus; plus a float rule for KDE
+  Connect's reply window
+
+Re-running `install.sh` after an update adds only the pieces you are missing,
+matched against the rules themselves rather than comment text.

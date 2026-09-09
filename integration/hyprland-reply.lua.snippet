@@ -1,0 +1,5 @@
+
+-- phonelink: KDE Connect's reply window, which is what the "Reply" action on a
+-- phone notification opens. Left alone it tiles, so answering a message
+-- rearranges the whole workspace for what is a throwaway text box.
+o.window("^(org\\.kde\\.kdeconnect\\.daemon)$", { float = true, center = true })

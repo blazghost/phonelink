@@ -18,6 +18,12 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/phonelink"
 DEVICE_FILE="$STATE_DIR/adb-device"
 mkdir -p "$STATE_DIR"
 
+# Resolved through the symlink in ~/.local/bin, so the helpers next to the real
+# script are found wherever the checkout lives.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+SRC_DIR="$(dirname "$SELF")"
+NOTIFY_HELPER="$SRC_DIR/lib/kdeconnect-notify.py"
+
 PKGS=(kdeconnect scrcpy android-tools)
 
 c_red=$'\033[31m'; c_yel=$'\033[33m'; c_cya=$'\033[36m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
@@ -264,6 +270,62 @@ cmd_send() {
 
 cmd_ring() { kdeconnect-cli -d "$(require_kde)" --ring && ok "ringing your phone"; }
 
+# Android attaches a RemoteInput action to any notification you could answer
+# from the phone's own shade -- messengers and SMS, not news feeds. KDE Connect
+# carries that through as a replyId, and sendReply() puts the answer back into
+# the originating app. See lib/kdeconnect-notify.py for the D-Bus side.
+cmd_reply() {
+  local direct=0
+  [[ ${1-} == --list ]] && { need_reply_deps; "$NOTIFY_HELPER" list | jq -r \
+    '.[] | "\(.app) — \(.title): \(.text)"'; return 0; }
+  (( $# )) && direct=1
+  # Only a prompt needs a terminal; `phonelink reply "text"` does not.
+  (( direct )) || reexec_tty reply
+  need_reply_deps
+
+  local json count
+  json=$("$NOTIFY_HELPER" list) || die "could not reach kdeconnectd. Is KDE Connect running?"
+  count=$(printf '%s' "$json" | jq 'length')
+
+  (( count )) || die "nothing to reply to right now.
+  Only notifications you could answer from the phone's own shade show up here --
+  messengers and SMS. Feed and news apps offer no reply box, so KDE Connect has
+  nothing to send to."
+
+  local path label msg
+  if (( direct )) || (( count == 1 )); then
+    # With text on the command line this is the instant-reply path: newest wins,
+    # no picker, so it can sit on a keybind.
+    path=$(printf '%s' "$json" | jq -r '.[0].path')
+    label=$(printf '%s' "$json" | jq -r '.[0] | "\(.app) — \(.title)"')
+  else
+    local pick
+    pick=$(printf '%s' "$json" | jq -r '.[] | "\(.path)\t\(.app) — \(.title): \(.text)"' \
+      | fzf --delimiter='\t' --with-nth=2.. --prompt='reply to> ' --height='~40%' --no-multi) || return 0
+    path=${pick%%$'\t'*}
+    label=${pick#*$'\t'}
+    label=${label%%:*}
+  fi
+
+  if (( direct )); then
+    msg="$*"
+  elif have gum; then
+    msg=$(gum input --placeholder="reply to $label" --width=70) || return 0
+  else
+    read -rp "reply to $label: " msg
+  fi
+  [[ -n ${msg//[[:space:]]/} ]] || { warn "empty reply, nothing sent"; return 0; }
+
+  "$NOTIFY_HELPER" send "$path" "$msg"
+  ok "replied to $label"
+}
+
+need_reply_deps() {
+  need kdeconnect-cli
+  have jq || die "phonelink reply needs jq (it ships with Omarchy: omarchy pkg add jq)"
+  [[ -x $NOTIFY_HELPER ]] || die "reply helper missing at $NOTIFY_HELPER"
+}
+
 cmd_clip() {
   local dev; dev=$(require_kde)
   kdeconnect-cli -d "$dev" --send-clipboard 2>/dev/null && { ok "clipboard pushed"; return 0; }
@@ -297,6 +359,7 @@ cmd_menu() {
   local choice
   choice=$(printf '%s\n' \
     'status   what is connected right now' \
+    'reply    reply to a phone notification from here' \
     'mirror   mirror and control the phone screen' \
     'desk     run one app on its own virtual display' \
     'send     share a file to the phone' \
@@ -322,6 +385,10 @@ phonelink — Android on your Linux desktop
   send <files...>   share files to the phone via KDE Connect
   pull <remote> [d] copy a file off the phone
   push <local> [d]  copy a file onto the phone
+  reply [text]      reply to a phone notification without touching the phone.
+                    With no text: pick a conversation and type. With text:
+                    straight to the newest one, so it can sit on a keybind.
+  reply --list      show which notifications can be replied to
   ring              make the phone ring
   clip              push the desktop clipboard to the phone
   kde               open KDE Connect (pairing, SMS, notification settings)
@@ -347,6 +414,7 @@ main() {
     pull)          shift; cmd_pull "$@" ;;
     push)          shift; cmd_push "$@" ;;
     ring|find)     shift; cmd_ring "$@" ;;
+    reply|r)       shift; cmd_reply "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
     sms)           shift; cmd_sms "$@" ;;
