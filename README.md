@@ -33,8 +33,13 @@ Both are idempotent and back up every file they touch. `install.sh` needs no
 root and degrades gracefully off Omarchy — you keep the command, you just lose
 the menu entry and the window rules.
 
-Then log out and back in (for the `adbusers` group), install KDE Connect on the
-phone, and pair with `phonelink kde`. `setup.sh` prints the full checklist.
+Then install KDE Connect on the phone and pair with `phonelink kde`.
+`setup.sh` prints the full checklist.
+
+The log-out that `setup.sh` asks for is only needed for **USB** adb, which
+wants the `adbusers` group your running session does not have yet. Wireless
+(`phonelink pair`) is a TCP connection with no device node, so it works
+immediately without logging out.
 
 ### Requirements
 
