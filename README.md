@@ -23,11 +23,24 @@ exactly which command fixes it instead of printing a stack trace.
 ## Install
 
 ```sh
-sudo ~/Work/phonelink/setup.sh     # packages, udev rules, ufw ports
+git clone https://github.com/blazghost/phonelink.git
+cd phonelink
+./install.sh        # links phonelink onto PATH, wires up the Omarchy menu + window rules
+sudo ./setup.sh     # packages, udev rules, ufw ports
 ```
 
-Then log out and back in, install KDE Connect on the phone, and pair with
-`phonelink kde`. `setup.sh` prints the whole checklist and is safe to re-run.
+Both are idempotent and back up every file they touch. `install.sh` needs no
+root and degrades gracefully off Omarchy — you keep the command, you just lose
+the menu entry and the window rules.
+
+Then log out and back in (for the `adbusers` group), install KDE Connect on the
+phone, and pair with `phonelink kde`. `setup.sh` prints the full checklist.
+
+### Requirements
+
+Arch-based, and `setup.sh` assumes `pacman` and `ufw`. The desktop integration
+assumes [Omarchy](https://omarchy.org/); the `phonelink` command itself is
+plain bash and works on any Linux with the four tools installed.
 
 ## Use
 
@@ -61,11 +74,9 @@ PHONELINK_DISPLAY_SIZE='1920x1080/240'                   # geometry for `desk`
 
 ## Desktop integration
 
-Installed alongside the script:
+`install.sh` applies these, keeping a timestamped `.bak.*` of each:
 
 - `~/.config/omarchy/extensions/omarchy-menu.jsonc` — the Phone menu section
 - `~/.config/hypr/bindings.lua` — `SUPER + SHIFT + L`
 - `~/.config/hypr/hyprland.lua` — scrcpy window rules: fully opaque and unblurred
   (it is video), and no idle-lock while it has focus
-
-Timestamped `.bak.*` copies of each were left next to the originals.
