@@ -108,6 +108,8 @@ append_once "$HYPR_DIR/hyprland.lua" 'o.window("^([sS]crcpy)$"' \
 # Matched literally, backslashes and all: the Lua rule escapes the dots.
 append_once "$HYPR_DIR/hyprland.lua" 'org\\.kde\\.kdeconnect\\.daemon' \
   "$SRC_DIR/integration/hyprland-reply.lua.snippet" "KDE Connect reply dialog (float)"
+append_once "$HYPR_DIR/hyprland.lua" 'org\\.omarchy\\.phonelink' \
+  "$SRC_DIR/integration/hyprland-panel.lua.snippet" "phonelink reply panel (float)"
 
 if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   step "Reloading Hyprland"
