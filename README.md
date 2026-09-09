@@ -96,6 +96,18 @@ and answers the newest one, which is what makes it useful on a keybind.
 Under the hood this is `sendReply()` on kdeconnectd's D-Bus objects; see
 `lib/kdeconnect-notify.py`. Nothing reimplements KDE Connect's protocol.
 
+### Group conversations
+
+Android packs the recent thread into a single notification body as small HTML —
+`<b>Sender</b><br/>what they said<br/><b>Someone else</b><br/>…`. Shown raw that
+is a wall of markup and repeated names, so the helper parses it into speaker and
+text and the panel lays it out as a conversation, newest last, with a repeated
+speaker labelled once. Only the last few turns are shown; `… N earlier` marks
+what was left off, and `PHONELINK_THREAD_LINES` changes how many are kept.
+
+The panel is sized from that parsed thread before it opens, so a group thread
+is not clipped and a one-line chat is not mostly empty.
+
 ### Theming
 
 The reply panel takes its colours from the `GUM_*` environment Omarchy exports

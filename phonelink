@@ -39,6 +39,17 @@ ui_muted="${GUM_INPUT_PLACEHOLDER_FOREGROUND:-8}"
 ui_sel_bg="${GUM_FILTER_SELECTED_BACKGROUND:-238}"
 ui_sel_fg="${GUM_FILTER_SELECTED_FOREGROUND:-15}"
 
+# "#rrggbb" -> a truecolour SGR escape. A bare number is treated as a 256-colour
+# index, which is what the non-Omarchy fallbacks above are.
+sgr() {
+  local c="$1"
+  if [[ $c == '#'?????? ]]; then
+    printf '\033[38;2;%d;%d;%dm' "$((16#${c:1:2}))" "$((16#${c:3:2}))" "$((16#${c:5:2}))"
+  else
+    printf '\033[38;5;%sm' "$c"
+  fi
+}
+
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Launched from the Omarchy menu there is no terminal, so anything written to
@@ -68,6 +79,22 @@ reexec_tty() {
   have omarchy-launch-or-focus-tui || return 0
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
     "bash -c 'phonelink $*; printf \"\\n[any key to close]\"; read -rsn1'"
+}
+
+# Same idea as reexec_tty, but for the reply panel, whose height depends on how
+# much conversation there is to show. foot takes the size directly; the window
+# rule only floats and centres it, so it does not fight this.
+reexec_panel() {
+  local rows="$1" q
+  [[ -t 1 ]] && return 0
+  if have foot; then
+    # By path, not by name: PATH may hold a different copy of this script than
+    # the one running, and the panel must be the same version as its caller.
+    printf -v q '%q' "$SELF"
+    exec foot --app-id=org.omarchy.phonelink --window-size-chars="96x$rows" \
+      -e bash -c "$q reply; read -rsn1 -t 4"
+  fi
+  reexec_tty reply
 }
 
 # ---------------------------------------------------------------- adb devices
@@ -287,12 +314,12 @@ cmd_ring() { kdeconnect-cli -d "$(require_kde)" --ring && ok "ringing your phone
 cmd_reply() {
   local direct=0
   [[ ${1-} == --list ]] && { need_reply_deps; "$NOTIFY_HELPER" list | jq -r \
-    '.[] | "\(.app) — \(.title): \(.text)"'; return 0; }
+    '.[] | "\(.app) — \(.title): \((.thread | last | .body) // .text)"'; return 0; }
   (( $# )) && direct=1
-  # Only a prompt needs a terminal; `phonelink reply "text"` does not.
-  (( direct )) || reexec_tty reply
   need_reply_deps
 
+  # Fetched before opening a terminal, not after: the panel is sized from what
+  # is actually waiting, and "nothing to reply to" needs no window at all.
   local json count
   json=$("$NOTIFY_HELPER" list) || die "could not reach kdeconnectd. Is KDE Connect running?"
   count=$(printf '%s' "$json" | jq 'length')
@@ -302,6 +329,9 @@ cmd_reply() {
   messengers and SMS. Feed and news apps offer no reply box, so KDE Connect has
   nothing to send to."
 
+  # Only a prompt needs a terminal; `phonelink reply "text"` does not.
+  (( direct )) || reexec_panel "$(panel_rows "$json" "$count")"
+
   local path msg
   if (( direct )) || (( count == 1 )); then
     # With text on the command line this is the instant-reply path: newest wins,
@@ -309,7 +339,7 @@ cmd_reply() {
     path=$(printf '%s' "$json" | jq -r '.[0].path')
   else
     local pick
-    pick=$(printf '%s' "$json" | jq -r '.[] | "\(.path)\t\(.app) — \(.title): \(.text)"' \
+    pick=$(printf '%s' "$json" | jq -r '.[] | "\(.path)\t\(.title)  ·  \((.thread | last | .body) // .text)"' \
       | fzf --delimiter='\t' --with-nth=2.. --no-multi --height='~100%' \
             --border=rounded --border-label=' waiting ' --padding='0,1' \
             --prompt='  󰍉  ' --pointer='❯' --marker='❯' \
@@ -320,9 +350,10 @@ cmd_reply() {
   # Read the chosen conversation back out of the JSON rather than scraping the
   # picker line: with one message pending there is no picker at all, and the
   # message still has to be on screen while you answer it.
-  local app title text ticker label body
+  local app title text ticker label body thread
   eval "$(printf '%s' "$json" | jq -r --arg p "$path" '.[] | select(.path==$p) |
     "app=\(.app|@sh) title=\(.title|@sh) text=\(.text|@sh) ticker=\(.ticker//""|@sh)"')"
+  thread=$(printf '%s' "$json" | jq -c --arg p "$path" '.[] | select(.path==$p) | .thread // []')
   label="$app — $title"
   body="$text"
   [[ -n ${body//[[:space:]]/} ]] || body="$ticker"
@@ -330,7 +361,7 @@ cmd_reply() {
   if (( direct )); then
     msg="$*"
   else
-    show_incoming "$title" "$app" "$body"
+    show_incoming "$title" "$app" "$thread" "$body"
     if have gum; then
       # gum picks the prompt/cursor/placeholder colours out of the GUM_INPUT_*
       # environment Omarchy sets, so it is already themed.
@@ -345,24 +376,69 @@ cmd_reply() {
   ok "replied to $label"
 }
 
-# The message being answered stays on screen while you type it. Without this you
-# get a bare input box and have to remember what was said. Colours come from the
-# active theme, so it reads as part of the desktop rather than a shell script.
+# Render the conversation the way a messaging app would: who spoke, then what
+# they said. Android packs a group thread into one notification body as
+# "<b>Name</b><br/>text<br/>..." -- shown raw that is a wall of markup, so the
+# helper parses it and this lays it out. A repeated speaker is not re-labelled.
 show_incoming() {
-  local who="$1" app="${2:-}" body="${3:-}"
-  [[ -n ${body//[[:space:]]/} ]] || body="(no preview text — check the phone)"
-  if have gum; then
-    printf '\n'
-    # gum drops colour when its output is captured rather than written to a
-    # terminal, which is exactly what command substitution does -- so force it.
-    gum join --horizontal \
-      "$(CLICOLOR_FORCE=1 gum style --foreground "$ui_accent" --bold "  󰭹  $who")" \
-      "$(CLICOLOR_FORCE=1 gum style --foreground "$ui_muted" "  ·  $app")"
-    gum style --border rounded --border-foreground "$ui_muted" --foreground "$ui_text" \
-      --padding "0 1" --margin "0 0 0 2" --width 64 "$body"
-  else
-    printf '\n  %s%s%s  ·  %s\n\n  %s\n\n' "$c_cya" "$who" "$c_off" "$app" "$body"
+  local who="$1" app="${2:-}" thread="${3:-[]}" fallback="${4:-}"
+  local acc mut txt off width total limit skip prev sender body line
+  acc=$(sgr "$ui_accent"); mut=$(sgr "$ui_muted"); txt=$(sgr "$ui_text"); off=$'\033[0m'
+
+  width=$(( ${COLUMNS:-$(tput cols 2>/dev/null || echo 90)} - 6 ))
+  (( width > 96 )) && width=96
+  (( width < 30 )) && width=30
+
+  printf '\n  %s󰭹  %s%s   %s·   %s%s\n\n' "$acc" "$who" "$off" "$mut" "$app" "$off"
+
+  total=$(printf '%s' "$thread" | jq 'length' 2>/dev/null || echo 0)
+  if (( total == 0 )); then
+    printf '  %s%s%s\n\n' "$txt" "${fallback:-(no preview text — check the phone)}" "$off"
+    return 0
   fi
+
+  # Only the tail is worth showing; the rest is history you already have.
+  limit="${PHONELINK_THREAD_LINES:-6}"
+  skip=0
+  (( total > limit )) && skip=$(( total - limit ))
+  (( skip )) && printf '  %s… %d earlier%s\n\n' "$mut" "$skip" "$off"
+
+  prev=""
+  # Split on US, not tab: bash treats tab as IFS whitespace and swallows a
+  # leading empty field, so a message with no sender -- every one-to-one chat --
+  # would put the body into `sender` and paint it as a name.
+  while IFS=$'\x1f' read -r sender body; do
+    if [[ -n $sender && $sender != "$prev" ]]; then
+      printf '  %s%s%s\n' "$acc" "$sender" "$off"
+    fi
+    prev="$sender"
+    while IFS= read -r line; do
+      printf '  %s%s%s\n' "$txt" "$line" "$off"
+    done < <(printf '%s\n' "$body" | fold -s -w "$width")
+    printf '\n'
+  done < <(printf '%s' "$thread" | jq -r --argjson s "$skip" '.[$s:][] | "\(.sender)\(.body)"')
+}
+
+# Height the panel to the message before opening it: a fixed size either clips a
+# group thread or leaves a one-line chat mostly empty.
+panel_rows() {
+  local json="$1" count="$2" limit="${PHONELINK_THREAD_LINES:-6}" rows n
+  if (( count > 1 )); then
+    rows=$(( count + 7 ))          # picker: a row each, plus border and prompt
+  else
+    # Measured, not guessed: a long message wraps and a short one does not, and
+    # under-counting scrolls the header off the top of the panel.
+    n=$(printf '%s' "$json" | jq --argjson lim "$limit" '
+      (.[0].thread // []) as $t
+      | (if ($t | length) > $lim then $t[($t | length) - $lim:] else $t end)
+      | if length == 0 then 3
+        else [ .[] | 2 + ((((.body | length) - 1) / 90) | floor) + 1 ] | add
+        end')
+    rows=$(( 6 + n ))              # header, blank, prompt, help, margins
+  fi
+  (( rows < 10 )) && rows=10
+  (( rows > 40 )) && rows=40
+  printf '%s\n' "$rows"
 }
 
 need_reply_deps() {

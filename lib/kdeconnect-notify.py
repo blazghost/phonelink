@@ -14,6 +14,7 @@ operations phonelink needs reachable from a shell.
     kdeconnect-notify.py send <objpath> <text>
 """
 
+import html
 import json
 import re
 import sys
@@ -50,6 +51,37 @@ def children(path):
     return re.findall(r'<node name="([^"]+)"', xml)
 
 
+def strip_markup(s):
+    """Android notification text is small HTML: tags out, entities decoded."""
+    return html.unescape(re.sub(r"<[^>]+>", "", s)).strip()
+
+
+def parse_thread(text):
+    """Split a notification body into [{sender, body}, ...].
+
+    A group conversation arrives as one blob with the whole recent thread in
+    it -- "<b>Sender</b><br/>what they said<br/><b>Other</b><br/>reply" -- so
+    rendering the raw string shows markup and a wall of names. A one-to-one
+    chat is usually just the message, which falls out of this as a single
+    entry with no sender.
+    """
+    if not text:
+        return []
+    out, sender = [], ""
+    for part in re.split(r"<br\s*/?>", text):
+        part = part.strip()
+        if not part:
+            continue
+        # A line that is nothing but bold text is a speaker label, not speech.
+        if re.fullmatch(r"<b>.*?</b>", part, flags=re.S | re.I):
+            sender = strip_markup(part)
+            continue
+        body = strip_markup(part)
+        if body:
+            out.append({"sender": sender, "body": body})
+    return out
+
+
 def repliable():
     found = []
     for device in children(DEVICES):
@@ -73,6 +105,8 @@ def repliable():
                 # Android's ticker is usually "Sender: body" and survives when
                 # text is empty, so it is the better fallback for a preview.
                 "ticker": props.get("ticker", ""),
+                "thread": parse_thread(props.get("text", ""))
+                          or parse_thread(props.get("ticker", "")),
                 "conversation": bool(props.get("isConversation")),
             })
     # Ids ascend as notifications arrive, so this is newest-first.
