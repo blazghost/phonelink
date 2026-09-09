@@ -70,6 +70,9 @@ def repliable():
                 "app": props.get("appName", ""),
                 "title": props.get("title", ""),
                 "text": props.get("text", ""),
+                # Android's ticker is usually "Sender: body" and survives when
+                # text is empty, so it is the better fallback for a preview.
+                "ticker": props.get("ticker", ""),
                 "conversation": bool(props.get("isConversation")),
             })
     # Ids ascend as notifications arrive, so this is newest-first.

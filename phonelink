@@ -22,7 +22,8 @@ mkdir -p "$STATE_DIR"
 # script are found wherever the checkout lives.
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC_DIR="$(dirname "$SELF")"
-NOTIFY_HELPER="$SRC_DIR/lib/kdeconnect-notify.py"
+# Overridable so the helper can live elsewhere when packaged separately.
+NOTIFY_HELPER="${PHONELINK_NOTIFY_HELPER:-$SRC_DIR/lib/kdeconnect-notify.py}"
 
 PKGS=(kdeconnect scrcpy android-tools)
 
@@ -292,32 +293,55 @@ cmd_reply() {
   messengers and SMS. Feed and news apps offer no reply box, so KDE Connect has
   nothing to send to."
 
-  local path label msg
+  local path msg
   if (( direct )) || (( count == 1 )); then
     # With text on the command line this is the instant-reply path: newest wins,
     # no picker, so it can sit on a keybind.
     path=$(printf '%s' "$json" | jq -r '.[0].path')
-    label=$(printf '%s' "$json" | jq -r '.[0] | "\(.app) — \(.title)"')
   else
     local pick
     pick=$(printf '%s' "$json" | jq -r '.[] | "\(.path)\t\(.app) — \(.title): \(.text)"' \
       | fzf --delimiter='\t' --with-nth=2.. --prompt='reply to> ' --height='~40%' --no-multi) || return 0
     path=${pick%%$'\t'*}
-    label=${pick#*$'\t'}
-    label=${label%%:*}
   fi
+
+  # Read the chosen conversation back out of the JSON rather than scraping the
+  # picker line: with one message pending there is no picker at all, and the
+  # message still has to be on screen while you answer it.
+  local app title text ticker label body
+  eval "$(printf '%s' "$json" | jq -r --arg p "$path" '.[] | select(.path==$p) |
+    "app=\(.app|@sh) title=\(.title|@sh) text=\(.text|@sh) ticker=\(.ticker//""|@sh)"')"
+  label="$app — $title"
+  body="$text"
+  [[ -n ${body//[[:space:]]/} ]] || body="$ticker"
 
   if (( direct )); then
     msg="$*"
-  elif have gum; then
-    msg=$(gum input --placeholder="reply to $label" --width=70) || return 0
   else
-    read -rp "reply to $label: " msg
+    show_incoming "$label" "$body"
+    if have gum; then
+      msg=$(gum input --placeholder="your reply to $title" --width=70) || return 0
+    else
+      read -rp "reply: " msg
+    fi
   fi
   [[ -n ${msg//[[:space:]]/} ]] || { warn "empty reply, nothing sent"; return 0; }
 
   "$NOTIFY_HELPER" send "$path" "$msg"
   ok "replied to $label"
+}
+
+# The message being answered stays on screen while you type it. Without this
+# you get a bare input box and have to remember what was said.
+show_incoming() {
+  local who="$1" body="${2:-}"
+  [[ -n ${body//[[:space:]]/} ]] || body="(no preview text — check the phone)"
+  if have gum; then
+    gum style --border rounded --border-foreground 240 --padding "0 1" --margin "1 0" \
+      "$(gum style --bold "$who")" "$body"
+  else
+    printf '\n%s%s%s\n  %s\n\n' "$c_cya" "$who" "$c_off" "$body"
+  fi
 }
 
 need_reply_deps() {

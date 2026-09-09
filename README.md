@@ -87,7 +87,8 @@ There are two ways in, because they fail in different situations:
   workspace. `install.sh` adds a rule that floats and centres it.
 - **`SUPER + SHIFT + R`**, or `phonelink reply`. Notification popups are
   transient; once one has gone you can no longer click it. This lists every
-  conversation still waiting, so it works minutes later.
+  conversation still waiting, so it works minutes later. The message you are
+  answering stays on screen above the input while you type it.
 
 Given text directly — `phonelink reply "five minutes"` — it skips the picker
 and answers the newest one, which is what makes it useful on a keybind.
