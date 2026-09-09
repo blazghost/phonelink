@@ -108,7 +108,36 @@ append_once "$HYPR_DIR/hyprland.lua" 'o.window("^([sS]crcpy)$"' \
 # Matched literally, backslashes and all: the Lua rule escapes the dots.
 append_once "$HYPR_DIR/hyprland.lua" 'org\\.kde\\.kdeconnect\\.daemon' \
   "$SRC_DIR/integration/hyprland-reply.lua.snippet" "KDE Connect reply dialog (float)"
-append_once "$HYPR_DIR/hyprland.lua" 'org\\.omarchy\\.phonelink' \
+# The panel rule changed shape between versions -- it used to pin a size, which
+# now fights the height phonelink asks foot for. append_once can only add, so
+# drop any earlier copy first; the replacement carries begin/end markers so
+# future revisions can be swapped in place.
+if [[ -f $HYPR_DIR/hyprland.lua ]] && grep -qF 'org\\.omarchy\\.phonelink' "$HYPR_DIR/hyprland.lua" \
+   && ! grep -qF 'phonelink:panel:begin' "$HYPR_DIR/hyprland.lua"; then
+  cp "$HYPR_DIR/hyprland.lua" "$HYPR_DIR/hyprland.lua.bak.$TS"
+  python3 - "$HYPR_DIR/hyprland.lua" <<'PY'
+import pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text().splitlines(keepends=True)
+
+start = next(i for i, l in enumerate(lines) if r'org\\.omarchy\\.phonelink' in l)
+# Walk back over the comment block that introduces the rule...
+while start > 0 and lines[start - 1].lstrip().startswith("--"):
+    start -= 1
+while start > 0 and not lines[start - 1].strip():
+    start -= 1
+# ...and forward to the line that closes the o.window call.
+end = start
+while end < len(lines) and lines[end].rstrip() != "})":
+    end += 1
+end += 1
+
+path.write_text("".join(lines[:start] + lines[end:]))
+PY
+  note "removed the previous fixed-size panel rule"
+fi
+append_once "$HYPR_DIR/hyprland.lua" 'phonelink:panel:begin' \
   "$SRC_DIR/integration/hyprland-panel.lua.snippet" "phonelink reply panel (float)"
 
 if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
