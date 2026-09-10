@@ -82,42 +82,62 @@ appear here.
 
 There are two ways in, because they fail in different situations:
 
-- **Click *Reply* on the notification.** This already worked, but the window it
-  opens tiles by default, so answering a message rearranged your whole
-  workspace. `install.sh` adds a rule that floats and centres it.
-- **`SUPER + SHIFT + R`**, or `phonelink reply`. Notification popups are
-  transient; once one has gone you can no longer click it. This lists every
-  conversation still waiting, so it works minutes later. The message you are
-  answering stays on screen above the input while you type it.
+- **`SUPER + SHIFT + R`**, the menu's *Reply to a notification*, or
+  `phonelink reply` from a launcher. This opens a Phone Link-style window: the
+  conversation as chat bubbles, each speaker's avatar and name over their run
+  of messages in a group chat, and a compose bar at the bottom. With several
+  conversations waiting it becomes a two-pane window with the list on the
+  left. Enter sends, Escape closes, and a single conversation closes itself a
+  moment after the reply lands. Notification popups are transient; this still
+  works once one has gone.
+- **Click *Reply* on the notification.** That opens KDE Connect's own reply
+  window, which is not phonelink's to restyle; `install.sh` only stops it
+  tiling. The keybind is the nicer path.
 
-Given text directly — `phonelink reply "five minutes"` — it skips the picker
-and answers the newest one, which is what makes it useful on a keybind.
+Run from a terminal, `phonelink reply` stays in the terminal — a themed picker
+and prompt, handy over SSH. `--gui` and `--tui` (or `PHONELINK_UI=gui|tui`)
+force either. Given text directly — `phonelink reply "five minutes"` — it skips
+both and answers the newest conversation, which is what makes it useful on a
+keybind of its own.
 
 Under the hood this is `sendReply()` on kdeconnectd's D-Bus objects; see
-`lib/kdeconnect-notify.py`. Nothing reimplements KDE Connect's protocol.
+`lib/kdeconnect-notify.py`. Nothing reimplements KDE Connect's protocol. The
+window is `lib/phonelink-reply-gtk.py`: GTK 4 and libadwaita through PyGObject,
+all of which Omarchy ships.
 
 ### Group conversations
 
 Android packs the recent thread into a single notification body as small HTML —
 `<b>Sender</b><br/>what they said<br/><b>Someone else</b><br/>…`. Shown raw that
 is a wall of markup and repeated names, so the helper parses it into speaker and
-text and the panel lays it out as a conversation, newest last, with a repeated
-speaker labelled once. Only the last few turns are shown; `… N earlier` marks
-what was left off, and `PHONELINK_THREAD_LINES` changes how many are kept.
+text, and both the window and the terminal panel lay it out as a conversation,
+newest last, with a repeated speaker labelled once. The window scrolls; the
+terminal panel shows the last few turns, marks the rest `… N earlier`, and
+`PHONELINK_THREAD_LINES` changes how many.
 
-The panel is sized from that parsed thread before it opens, so a group thread
-is not clipped and a one-line chat is not mostly empty.
+Both size themselves to the conversation before opening, so a group thread is
+not clipped and a one-line chat is not mostly empty.
+
+### Avatars
+
+KDE Connect saves each notification's large icon, which for a messenger is
+usually the contact's or the group's photo; the window uses it in the header and
+the conversation list. Everyone else, and anyone without a photo, gets an
+initials circle.
 
 ### Theming
 
-The reply panel takes its colours from the `GUM_*` environment Omarchy exports
-for the active theme — accent, foreground, muted and selection — so it follows
-`omarchy theme set` instead of pinning one palette. Off Omarchy, or with those
-variables unset, it falls back to plain ANSI colours.
+The window reads the active theme's full palette from
+`~/.local/state/omarchy/current/theme/colors.toml`: the accent for your own
+bubbles and the send button, the lighter background for incoming bubbles, the
+theme's named hues for avatar circles, and whether it is a light or dark theme.
+The terminal panel uses the `GUM_*` environment Omarchy exports. Either way it
+follows `omarchy theme set` instead of pinning one palette, and falls back to
+Adwaita or plain ANSI colours off Omarchy.
 
-It opens as a floating, centred, fully opaque panel. Opaque on purpose: a
-floating window under Omarchy's default translucency shows whatever is behind
-it unblurred, and a message is not readable through another terminal.
+Both open floating, centred and fully opaque. Opaque on purpose: a floating
+window under Omarchy's default translucency shows whatever is behind it
+unblurred, and a message is not readable through another terminal.
 
 ## Tuning
 

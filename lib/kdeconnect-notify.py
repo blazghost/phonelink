@@ -82,6 +82,12 @@ def parse_thread(text):
     return out
 
 
+def icon_path(props):
+    """The notification's icon file, if KDE Connect wrote one that still exists."""
+    path = props.get("iconPath", "") if props.get("hasIcon") else ""
+    return path if path and GLib.file_test(path, GLib.FileTest.IS_REGULAR) else ""
+
+
 def repliable():
     found = []
     for device in children(DEVICES):
@@ -108,6 +114,10 @@ def repliable():
                 "thread": parse_thread(props.get("text", ""))
                           or parse_thread(props.get("ticker", "")),
                 "conversation": bool(props.get("isConversation")),
+                # KDE Connect writes the notification's large icon to a temp
+                # file; for a messenger that is usually the contact's or the
+                # group's photo, which the reply window uses as the avatar.
+                "icon": icon_path(props),
             })
     # Ids ascend as notifications arrive, so this is newest-first.
     found.sort(key=lambda n: n["id"], reverse=True)
