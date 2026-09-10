@@ -492,6 +492,13 @@ class Daemon:
             # tests drive this without waiting for a message to arrive.
             kn.BUS.signal_subscribe(None, PLUGIN_IFACE, None, None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_signal)
+            # Updates need a hook of their own. KDE Connect re-shows an existing
+            # notification's popup on every non-silent update -- a second
+            # message in the same chat -- but announces it on no plugin signal:
+            # notificationUpdated is declared and never emitted. The object's
+            # own `ready` fires on each (re)show, so that is the one to follow.
+            kn.BUS.signal_subscribe(None, kn.NOTIF_IFACE, "ready", None, None,
+                                    Gio.DBusSignalFlags.NONE, self.on_ready)
             print("phonelink toasts: listening for phone notifications", flush=True)
         elif self.mode == "demo":
             for i, note in enumerate(demo_notes()):
@@ -515,17 +522,29 @@ class Daemon:
         if member not in ("notificationPosted", "notificationUpdated", "notificationRemoved"):
             return
         objpath = f"{path}/{params.unpack()[0]}"
-        shown = next((t for t in self.toasts if t.key == objpath), None)
         if member == "notificationRemoved":
-            if shown:
-                shown.close()  # read or dismissed on the phone: gone here too
+            for toast in list(self.toasts):
+                if toast.key == objpath:
+                    toast.close()  # read or dismissed on the phone: gone here too
             return
+        self.refresh(objpath)
+
+    def on_ready(self, _conn, _sender, path, _iface, _member, _params):
+        if path.startswith(DEVICES) and "/notifications/" in path:
+            self.refresh(path)
+
+    def refresh(self, objpath):
+        """Pop, or update in place, exactly when KDE Connect would have popped.
+
+        A brand-new notification can arrive as both notificationPosted and a
+        `ready`; the second finds its toast already up and just refreshes it.
+        """
         note = read_note(objpath)
         if not note:
             return
-        if shown:
+        if shown := next((t for t in self.toasts if t.key == objpath), None):
             shown.update(note)
-        elif member == "notificationPosted" and not note["silent"] and not dnd_on():
+        elif not note["silent"] and not dnd_on():
             # KDE Connect never pops a silent notification either; honouring the
             # flag keeps a reconnect from replaying the whole shade as toasts.
             self.show(note)
