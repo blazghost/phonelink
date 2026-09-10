@@ -159,6 +159,9 @@ It is built to sit on Omarchy rather than on top of it:
   a toast by surprise, but it does when you click its reply box;
 - the countdown pauses while you hover or type; Escape or a right-click
   dismisses; a left-click opens the full reply window on that conversation;
+- a new message in a chat pops again, even though the phone only updates the
+  chat's existing notification rather than posting another — just as KDE
+  Connect's own popup did;
 - a notification read or dismissed on the phone disappears here too.
 
 Toasts go **bottom-right**, where Phone Link puts them, which also keeps them
