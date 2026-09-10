@@ -54,6 +54,7 @@ plain bash and works on any Linux with the four tools installed.
 ```
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
+phonelink messages          the phone's texts, with MMS photos and video
 phonelink status            what is connected right now, and what is missing
 phonelink mirror            mirror and control the phone screen
 phonelink desk [package]    run one app on its own virtual display
@@ -66,11 +67,38 @@ phonelink pair              Android 11+ wireless-debugging walkthrough
 phonelink pull <remote>     copy a file off the phone
 phonelink push <local>      copy a file onto the phone
 phonelink kde / sms         KDE Connect windows
+phonelink kde restart       unstick KDE Connect if it stops answering
 ```
 
 `desk` is the one worth knowing about: it gives an app its own desktop-shaped
 display via scrcpy's virtual display, so the app is a normal window on your
 screen while the phone stays usable in your hand.
+
+## Messages: texts with photos and video
+
+`phonelink messages`, or *Messages* in the Phone menu, is Phone Link's Messages
+tab for the phone's SMS and MMS. The conversation list sits on the left with a
+search box; the thread is on the right, with received and sent bubbles and MMS
+pictures and videos in place. A picture appears at once from the small
+thumbnail the phone sends with the message and sharpens when the full image
+arrives; a video plays in your default player. Click a picture or video to open
+it, right-click to save it to `~/Pictures/Phone`, or drag it into another app.
+To send photos or videos, use the paperclip or drop files onto the
+conversation. Carriers often refuse MMS much over 1.5 MB, so it warns you.
+
+Names and contact photos come from the contacts KDE Connect syncs from the
+phone. If threads show numbers instead, enable the Contacts plugin, and allow
+its permission, in the KDE Connect app on the phone.
+
+**Signal, Messenger, WhatsApp.** KDE Connect can read the phone's texting
+database, but not other apps' messages. A Signal or Messenger notification
+carries its text and one small icon, never the photo or video, and Android only
+lets you reply to a notification with text. Phone Link on Windows has the same
+limit. So their toasts and their conversations in the reply window get an
+**Open** button, which runs the app itself on your desktop:
+`phonelink desk <package>`, scrcpy on its own virtual display. Every photo and
+video is there, and you can send media as you would on the phone. It needs
+wireless adb, set up once with `phonelink pair`.
 
 ## Replying to notifications
 

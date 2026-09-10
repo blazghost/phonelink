@@ -194,6 +194,8 @@ window.phonelink-toast {{ background: transparent; }}
 .toast .close   {{ min-width: 24px; min-height: 24px; padding: 0; border-radius: 999px;
                    background: transparent; color: {p['muted']}; }}
 .toast .close:hover {{ background: alpha({self.text}, 0.08); color: {self.text}; }}
+.toast .content button.flat {{ font-size: {self.caption_px}px; font-weight: 600; color: {p['accent']};
+                               min-height: 24px; padding: 0 8px; border-radius: 999px; }}
 .toast entry {{ border-radius: 999px; min-height: 34px; padding: 0 14px; font-size: {self.body_px}px;
                 background: {p['lighter_background']}; color: {self.text};
                 box-shadow: none; outline: none; }}
@@ -223,6 +225,7 @@ def read_note(objpath):
         "text": text, "ticker": ticker,
         "thread": kn.parse_thread(text) or kn.parse_thread(ticker),
         "icon": kn.icon_path(props),
+        "package": (props.get("internalId", "").split("|") + ["", ""])[1],
         "repliable": bool(props.get("replyId")),
         "silent": bool(props.get("silent")),
     }
@@ -258,13 +261,14 @@ DEMO_THREAD = ("<b>Amos Burton</b><br/>Reactor's back online<br/>"
 
 
 def demo_notes():
-    def note(i, app, title, text, repliable):
-        return {"path": f"demo:{i}", "app": app, "title": title, "text": text, "ticker": "",
-                "thread": kn.parse_thread(text), "icon": "", "repliable": repliable,
-                "silent": False}
-    return [note(1, "Signal", "Rocinante crew", DEMO_THREAD, True),
-            note(2, "Instagram", "bobbie.draper", "liked your reel", False),
-            note(3, "Messenger", "Chrisjen Avasarala", "Call me when you land. We need to talk.", True)]
+    def note(i, app, package, title, text, repliable):
+        return {"path": f"demo:{i}", "app": app, "package": package, "title": title,
+                "text": text, "ticker": "", "thread": kn.parse_thread(text), "icon": "",
+                "repliable": repliable, "silent": False}
+    return [note(1, "Signal", "org.thoughtcrime.securesms", "Rocinante crew", DEMO_THREAD, True),
+            note(2, "Instagram", "com.instagram.android", "bobbie.draper", "liked your reel", False),
+            note(3, "Messenger", "com.facebook.orca", "Chrisjen Avasarala",
+                 "Call me when you land. We need to talk.", True)]
 
 
 # ---------------------------------------------------------------------- toast
@@ -336,6 +340,14 @@ class Toast:
         header = Gtk.Box(spacing=6)
         header.append(ui.label("󰄜", "app-glyph"))
         header.append(text_label(note["app"] or "Phone", "app", ellipsize=Pango.EllipsizeMode.END))
+        if note.get("package"):
+            # Photos, videos and the rest of the thread never travel in a
+            # notification; this opens the app that has them.
+            opener = Gtk.Button(label=ui.open_label(note["package"], note["app"]),
+                                focus_on_click=False, valign=Gtk.Align.CENTER)
+            opener.add_css_class("flat")
+            opener.connect("clicked", lambda *_: (ui.open_in_app(note["package"]), self.close()))
+            header.append(opener)
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)
         close.add_css_class("close")
