@@ -311,10 +311,21 @@ cmd_ring() { kdeconnect-cli -d "$(require_kde)" --ring && ok "ringing your phone
 # from the phone's own shade -- messengers and SMS, not news feeds. KDE Connect
 # carries that through as a replyId, and sendReply() puts the answer back into
 # the originating app. See lib/kdeconnect-notify.py for the D-Bus side.
+# GTK 4 and libadwaita through PyGObject, and a display to put a window on.
+gui_available() {
+  [[ -n ${WAYLAND_DISPLAY-}${DISPLAY-} ]] || return 1
+  [[ -f $SRC_DIR/lib/phonelink-reply-gtk.py ]] || return 1
+  python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null
+}
+
 cmd_reply() {
-  local direct=0
+  local direct=0 ui="${PHONELINK_UI:-auto}"
   [[ ${1-} == --list ]] && { need_reply_deps; "$NOTIFY_HELPER" list | jq -r \
     '.[] | "\(.app) — \(.title): \((.thread | last | .body) // .text)"'; return 0; }
+  case ${1-} in
+    --gui) ui=gui; shift ;;
+    --tui) ui=tui; shift ;;
+  esac
   (( $# )) && direct=1
   need_reply_deps
 
@@ -329,8 +340,18 @@ cmd_reply() {
   messengers and SMS. Feed and news apps offer no reply box, so KDE Connect has
   nothing to send to."
 
-  # Only a prompt needs a terminal; `phonelink reply "text"` does not.
-  (( direct )) || reexec_panel "$(panel_rows "$json" "$count")"
+  if (( ! direct )); then
+    # The window is the Phone Link-style reply. The terminal panel stays for
+    # when you are already in a shell, over SSH, or GTK is unavailable.
+    if [[ $ui == gui || ( $ui == auto && ! -t 1 ) ]]; then
+      if gui_available; then
+        PHONELINK_NOTIFY_HELPER="$NOTIFY_HELPER" exec python3 "$SRC_DIR/lib/phonelink-reply-gtk.py"
+      fi
+      [[ $ui == gui ]] && warn "GTK 4 / libadwaita not available here -- using the terminal panel"
+    fi
+    # Only a prompt needs a terminal; `phonelink reply "text"` does not.
+    reexec_panel "$(panel_rows "$json" "$count")"
+  fi
 
   local path msg
   if (( direct )) || (( count == 1 )); then
@@ -507,8 +528,10 @@ phonelink — Android on your Linux desktop
   pull <remote> [d] copy a file off the phone
   push <local> [d]  copy a file onto the phone
   reply [text]      reply to a phone notification without touching the phone.
-                    With no text: pick a conversation and type. With text:
-                    straight to the newest one, so it can sit on a keybind.
+                    From a keybind or the menu: a Phone Link-style window. In a
+                    terminal: pick a conversation and type. With text: straight
+                    to the newest one, so it can sit on a keybind.
+  reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
   ring              make the phone ring
   clip              push the desktop clipboard to the phone
