@@ -139,6 +139,8 @@ PY
 fi
 append_once "$HYPR_DIR/hyprland.lua" 'phonelink:panel:begin' \
   "$SRC_DIR/integration/hyprland-panel.lua.snippet" "phonelink reply panel (float)"
+append_once "$HYPR_DIR/hyprland.lua" 'phonelink:messages' \
+  "$SRC_DIR/integration/hyprland-messages.lua.snippet" "Messages window (opaque)"
 
 step "Phone notification toasts"
 # Delegated to `phonelink toasts on`, which is also how you turn them back on

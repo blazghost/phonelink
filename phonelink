@@ -491,7 +491,18 @@ cmd_push() {
 
 launch() { if have uwsm-app; then uwsm-app -- "$@"; else "$@"; fi; }
 
-cmd_kde()  { need kdeconnect-app; launch kdeconnect-app; }
+cmd_kde() {
+  if [[ ${1-} == restart ]]; then
+    # kdeconnectd can stop answering outright -- a flood of SMS requests has
+    # hung it. Restarting it is harmless: the phone reconnects on its own.
+    restart_kdeconnect
+    kdeconnect-cli --refresh >/dev/null 2>&1 || true
+    ok "KDE Connect restarted; the phone reconnects in a few seconds"
+    return 0
+  fi
+  need kdeconnect-app
+  launch kdeconnect-app
+}
 cmd_sms()  { need kdeconnect-sms; launch kdeconnect-sms; }
 cmd_drop() { need localsend; launch localsend; }
 
@@ -533,6 +544,7 @@ phonelink — Android on your Linux desktop
                     to the newest one, so it can sit on a keybind.
   reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
+  messages          the phone's texts, with MMS photos and video, Phone Link-style
   toasts on|off     Phone Link-style popups for phone notifications, with a
                     reply box right in the popup (runs as a systemd user service)
   toasts status     whether they are running, and Do Not Disturb
@@ -540,6 +552,7 @@ phonelink — Android on your Linux desktop
   ring              make the phone ring
   clip              push the desktop clipboard to the phone
   kde               open KDE Connect (pairing, SMS, notification settings)
+  kde restart       unstick KDE Connect when it stops answering
   sms               open the KDE Connect SMS window
   drop              open LocalSend
   menu              fzf picker for all of the above
@@ -667,6 +680,7 @@ main() {
     reply|r)       shift; cmd_reply "$@" ;;
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
+    messages|texts) shift; cmd_messages "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
     sms)           shift; cmd_sms "$@" ;;
@@ -675,6 +689,14 @@ main() {
     -h|--help|help) cmd_help ;;
     *) die "unknown command: $1  (try: phonelink --help)" ;;
   esac
+}
+
+# The phone's SMS/MMS conversations with their photos and video, in a GTK window
+# (lib/phonelink-messages.py) over KDE Connect's conversations interface.
+cmd_messages() {
+  gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
+    || die "the Messages window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
+  exec python3 "$SRC_DIR/lib/phonelink-messages.py" "$@"
 }
 
 main "$@"

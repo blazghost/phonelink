@@ -133,6 +133,8 @@ window {{ font-family: "Adwaita Sans", sans-serif; }}
 .sender {{ font-size: 8.5pt; font-weight: 600; color: {p['muted']}; margin: 0 0 3px 3px; }}
 .meta   {{ font-size: 8pt; color: {p['muted']}; margin: 3px 4px 0; }}
 
+headerbar button.flat {{ font-size: 9pt; font-weight: 600; color: {p['accent']};
+                         min-height: 28px; padding: 0 10px; border-radius: 999px; }}
 .title-name {{ font-weight: 700; font-size: 11pt; }}
 .title-app  {{ font-size: 8.5pt; color: {p['muted']}; }}
 
@@ -220,6 +222,30 @@ def send_icon():
     return "go-next-symbolic"
 
 
+# The phone's own texting apps. Their photos and videos are reachable through
+# KDE Connect, so "open" means phonelink's Messages window, not the app.
+SMS_APPS = {"com.samsung.android.messaging", "com.google.android.apps.messaging",
+            "com.android.mms", "com.android.messaging"}
+
+
+def open_in_app(package):
+    """Open a notification's app on the desktop, for what the notification
+    can't carry: phonelink's Messages window for SMS/MMS, otherwise the Android
+    app itself on a scrcpy virtual display. For Signal, Messenger or WhatsApp
+    that is the only way to see the photos, videos and the rest of the thread.
+    """
+    if not package:
+        return
+    phonelink = str(Path(__file__).resolve().parent.parent / "phonelink")
+    args = [phonelink, "messages"] if package in SMS_APPS else [phonelink, "desk", package]
+    subprocess.Popen(args, start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def open_label(package, app):
+    return "Open Messages" if package in SMS_APPS else f"Open {app or 'app'}"
+
+
 class ConversationView(Adw.Bin):
     """Header, the thread as bubbles, and the compose bar."""
 
@@ -277,6 +303,15 @@ class ConversationView(Adw.Bin):
         names.append(label(title, "title-name", ellipsize=Pango.EllipsizeMode.END))
         names.append(label(conv.get("app", ""), "title-app"))
         self.who.append(names)
+        # One Open button in the header, relabelled per conversation: the way to
+        # the photos and videos this notification can't show.
+        if not hasattr(self, "opener"):
+            self.opener = Gtk.Button(valign=Gtk.Align.CENTER, focus_on_click=False)
+            self.opener.add_css_class("flat")
+            self.opener.connect("clicked", lambda *_: open_in_app(self.conv.get("package")))
+            self.header.pack_end(self.opener)
+        self.opener.set_label(open_label(conv.get("package"), conv.get("app")))
+        self.opener.set_visible(bool(conv.get("package")))
 
         clear(self.thread)
         thread = conv.get("thread") or [

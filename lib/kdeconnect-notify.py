@@ -118,6 +118,10 @@ def repliable():
                 # file; for a messenger that is usually the contact's or the
                 # group's photo, which the reply window uses as the avatar.
                 "icon": icon_path(props),
+                # internalId is "0|<android package>|<id>|<tag>|<uid>". The
+                # package says exactly which app to open for the photos and
+                # videos a notification can't carry.
+                "package": (props.get("internalId", "").split("|") + ["", ""])[1],
             })
     # Ids ascend as notifications arrive, so this is newest-first.
     found.sort(key=lambda n: n["id"], reverse=True)
