@@ -455,8 +455,12 @@ class ReplyWindow(Adw.ApplicationWindow):
         split.set_sidebar(Adw.NavigationPage(child=side, title="Messages"))
         split.set_content(Adw.NavigationPage(child=self.view, title="Conversation"))
 
+        # Opened from a toast: start on that toast's conversation.
+        focus = os.environ.get("PHONELINK_FOCUS", "")
+        start = next((i for i, c in enumerate(self.convs) if c["path"] == focus), 0)
+
         def select_first():
-            rows.select_row(rows.get_row_at_index(0))
+            rows.select_row(rows.get_row_at_index(start))
             return False
         GLib.idle_add(select_first)
         return split

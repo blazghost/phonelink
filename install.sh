@@ -140,6 +140,18 @@ fi
 append_once "$HYPR_DIR/hyprland.lua" 'phonelink:panel:begin' \
   "$SRC_DIR/integration/hyprland-panel.lua.snippet" "phonelink reply panel (float)"
 
+step "Phone notification toasts"
+# Delegated to `phonelink toasts on`, which is also how you turn them back on
+# later: it installs and restarts the user service (so an update picks up new
+# code) and only then silences KDE Connect's duplicate popups.
+if [[ -z ${WAYLAND_DISPLAY:-} ]] || ! command -v systemctl >/dev/null 2>&1; then
+  skip "needs a Wayland session with systemd user services — skipped (phonelink toasts on, later)"
+elif "$SRC_DIR/phonelink" toasts on >/dev/null 2>&1; then
+  note "on: Phone Link-style popups with a reply box (phonelink toasts off to undo)"
+else
+  skip "could not start them — run: phonelink toasts on"
+fi
+
 if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   step "Reloading Hyprland"
   hyprctl reload >/dev/null && note "reloaded"
