@@ -133,6 +133,8 @@ window {{ font-family: "Adwaita Sans", sans-serif; }}
 .sender {{ font-size: 8.5pt; font-weight: 600; color: {p['muted']}; margin: 0 0 3px 3px; }}
 .meta   {{ font-size: 8pt; color: {p['muted']}; margin: 3px 4px 0; }}
 
+headerbar button.flat {{ font-size: 9pt; font-weight: 600; color: {p['accent']};
+                         min-height: 28px; padding: 0 10px; border-radius: 999px; }}
 .title-name {{ font-weight: 700; font-size: 11pt; }}
 .title-app  {{ font-size: 8.5pt; color: {p['muted']}; }}
 
