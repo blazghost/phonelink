@@ -533,6 +533,10 @@ phonelink — Android on your Linux desktop
                     to the newest one, so it can sit on a keybind.
   reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
+  toasts on|off     Phone Link-style popups for phone notifications, with a
+                    reply box right in the popup (runs as a systemd user service)
+  toasts status     whether they are running, and Do Not Disturb
+  toasts demo       show sample toasts, to check the look
   ring              make the phone ring
   clip              push the desktop clipboard to the phone
   kde               open KDE Connect (pairing, SMS, notification settings)
@@ -543,7 +547,109 @@ phonelink — Android on your Linux desktop
 Environment:
   PHONELINK_SCRCPY_ARGS    default scrcpy args for `mirror`  (default: --stay-awake)
   PHONELINK_DISPLAY_SIZE   virtual display for `desk`        (default: 1600x900/220)
+  PHONELINK_TOAST_POSITION bottom-right or top-right, set on the toast service
+                           with `systemctl --user edit phonelink-toastd`
 EOS
+}
+
+# -------------------------------------------------------------------- toasts
+#
+# Phone Link-style popups for phone notifications, drawn by a small resident
+# GTK app (lib/phonelink-toastd.py) running as a systemd user service.
+
+TOAST_UNIT=phonelink-toastd.service
+KDEC_UNIT=app-org.kde.kdeconnect.daemon@autostart.service
+NOTIFYRC="${XDG_CONFIG_HOME:-$HOME/.config}/kdeconnect.notifyrc"
+NOTIFYRC_MARK='# >>> phonelink toasts'
+
+layer_shell_lib() {
+  local f
+  for f in /usr/lib/libgtk4-layer-shell.so /usr/lib64/libgtk4-layer-shell.so \
+           /usr/lib/*-linux-gnu/libgtk4-layer-shell.so; do
+    [[ -e $f ]] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 1
+}
+
+# gtk4-layer-shell has to be loaded before GTK is, or GTK binds Wayland first
+# and every toast opens as an ordinary window.
+cmd_toastd() {
+  local lib
+  lib=$(layer_shell_lib) || die "gtk4-layer-shell is not installed: sudo pacman -S gtk4-layer-shell"
+  PHONELINK_NOTIFY_HELPER="$NOTIFY_HELPER" LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}" \
+    exec python3 "$SRC_DIR/lib/phonelink-toastd.py" "$@"
+}
+
+# KNotification keeps kdeconnect.notifyrc cached for the life of kdeconnectd,
+# so a change to it lands only after a restart. The phone reconnects by itself.
+restart_kdeconnect() {
+  if systemctl --user -q is-active "$KDEC_UNIT" 2>/dev/null; then
+    systemctl --user restart "$KDEC_UNIT"
+  elif pkill -x kdeconnectd 2>/dev/null; then
+    setsid -f kdeconnectd >/dev/null 2>&1
+  fi
+}
+
+toasts_on() {
+  have systemctl || die "phonelink toasts run as a systemd user service, and systemctl is missing"
+  layer_shell_lib >/dev/null || die "gtk4-layer-shell is not installed: sudo pacman -S gtk4-layer-shell"
+  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir"
+  install -m 644 "$SRC_DIR/integration/$TOAST_UNIT" "$unit_dir/$TOAST_UNIT"
+  systemctl --user daemon-reload
+  systemctl --user enable -q "$TOAST_UNIT"
+  # Restart, not just start: after an update this is what picks up new code.
+  systemctl --user restart "$TOAST_UNIT"
+  sleep 1
+  systemctl --user -q is-active "$TOAST_UNIT" \
+    || die "the toast daemon did not stay up -- see: journalctl --user -u $TOAST_UNIT"
+
+  # Only now that the toasts are confirmed running: silencing KDE Connect's own
+  # popups first would leave phone notifications with no popup at all if the
+  # daemon had failed.
+  if ! grep -qF "$NOTIFYRC_MARK" "$NOTIFYRC" 2>/dev/null; then
+    [[ -f $NOTIFYRC ]] && cp "$NOTIFYRC" "$NOTIFYRC.bak.$(date +%s)"
+    cat "$SRC_DIR/integration/kdeconnect.notifyrc.snippet" >> "$NOTIFYRC"
+    restart_kdeconnect
+  fi
+  ok "phone notification toasts on"
+}
+
+toasts_off() {
+  # KDE Connect's popups back first, so there is never a gap with neither.
+  if grep -qF "$NOTIFYRC_MARK" "$NOTIFYRC" 2>/dev/null; then
+    sed -i '/^# >>> phonelink toasts$/,/^# <<< phonelink toasts$/d' "$NOTIFYRC"
+    [[ -n $(tr -d '[:space:]' <"$NOTIFYRC") ]] || rm -f "$NOTIFYRC"
+    restart_kdeconnect
+  fi
+  systemctl --user disable -q --now "$TOAST_UNIT" 2>/dev/null || true
+  ok "phone notification toasts off -- KDE Connect's own popups are back"
+}
+
+toasts_status() {
+  local active enabled env
+  active=$(systemctl --user is-active "$TOAST_UNIT" 2>/dev/null || true)
+  enabled=$(systemctl --user is-enabled "$TOAST_UNIT" 2>/dev/null || true)
+  env=$(systemctl --user show -p Environment --value "$TOAST_UNIT" 2>/dev/null || true)
+  printf '  %-20s %s (%s)\n' "toast daemon" "${active:-inactive}" "${enabled:-not installed}"
+  if grep -qF "$NOTIFYRC_MARK" "$NOTIFYRC" 2>/dev/null; then
+    printf '  %-20s %s\n' "KDE Connect popups" "silenced for phone notifications (the toasts draw them)"
+  else
+    printf '  %-20s %s\n' "KDE Connect popups" "on -- showing their own"
+  fi
+  printf '  %-20s %s\n' "do not disturb" "$(omarchy-shell notifications isDnd 2>/dev/null || echo unknown)"
+  [[ $env == *PHONELINK_TOAST_POSITION=top-right* ]] && printf '  %-20s %s\n' "position" "top-right" \
+    || printf '  %-20s %s\n' "position" "bottom-right"
+}
+
+cmd_toasts() {
+  case "${1-status}" in
+    on)     toasts_on ;;
+    off)    toasts_off ;;
+    status) toasts_status ;;
+    demo)   cmd_toastd --demo ;;
+    *)      die "usage: phonelink toasts on|off|status|demo" ;;
+  esac
 }
 
 main() {
@@ -559,6 +665,8 @@ main() {
     push)          shift; cmd_push "$@" ;;
     ring|find)     shift; cmd_ring "$@" ;;
     reply|r)       shift; cmd_reply "$@" ;;
+    toasts|toast)  shift; cmd_toasts "$@" ;;
+    toastd)        shift; cmd_toastd "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
     sms)           shift; cmd_sms "$@" ;;

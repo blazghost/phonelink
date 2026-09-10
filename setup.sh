@@ -21,7 +21,8 @@ step "Installing packages"
 #   android-tools  adb, which scrcpy drives
 #   android-udev   non-root USB access, else adb sees "no permissions"
 #   python-gobject, gtk4, libadwaita   the reply window (Omarchy already ships them)
-pacman -S --needed --noconfirm kdeconnect scrcpy android-tools android-udev python-gobject gtk4 libadwaita
+#   gtk4-layer-shell   the notification toasts
+pacman -S --needed --noconfirm kdeconnect scrcpy android-tools android-udev python-gobject gtk4 libadwaita gtk4-layer-shell
 
 step "Adding $USER_NAME to the adbusers group (USB access without root)"
 if id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx adbusers; then

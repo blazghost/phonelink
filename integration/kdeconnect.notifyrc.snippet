@@ -1,0 +1,8 @@
+# >>> phonelink toasts
+# Phone notifications are drawn by phonelink's own toasts, so KDE Connect's
+# plain popup for them would be a duplicate. Only this one event is silenced:
+# calls, pairing requests, pings and low battery keep their popups.
+# `phonelink toasts off` removes this block.
+[Event/notification]
+Action=
+# <<< phonelink toasts

@@ -139,6 +139,40 @@ Both open floating, centred and fully opaque. Opaque on purpose: a floating
 window under Omarchy's default translucency shows whatever is behind it
 unblurred, and a message is not readable through another terminal.
 
+## Notification toasts
+
+`phonelink toasts on` (which `install.sh` runs) replaces the plain popup KDE
+Connect shows for a phone notification with a Phone Link-style toast: the app,
+the sender's avatar and name, the latest message — `Name: message` in a group
+chat — and, when the phone would let you answer from its own notification
+shade, a reply box right in the toast. Type, press Enter, and the reply goes
+straight back to the app on the phone; the toast shows *Sent* and closes.
+
+It is built to sit on Omarchy rather than on top of it:
+
+- sized and themed like Omarchy's own notification cards — width, padding,
+  Hyprland's corner rounding, the active-border gradient and the countdown bar
+  — read live from the theme, so `omarchy theme set` restyles it;
+- it honours Do Not Disturb, and KDE Connect's "silent" flag, so reconnecting
+  the phone does not replay its whole notification shade as toasts;
+- it never takes the keyboard when it appears, so you can't end up typing into
+  a toast by surprise, but it does when you click its reply box;
+- the countdown pauses while you hover or type; Escape or a right-click
+  dismisses; a left-click opens the full reply window on that conversation;
+- a notification read or dismissed on the phone disappears here too.
+
+Toasts go **bottom-right**, where Phone Link puts them, which also keeps them
+clear of Omarchy's own toasts in the top-right. For top-right instead, add
+`Environment=PHONELINK_TOAST_POSITION=top-right` with
+`systemctl --user edit phonelink-toastd`.
+
+Only phone notifications change hands: KDE Connect's popups for calls, pairing
+requests, pings and low battery are untouched. The toasts run as a systemd user
+service (`phonelink-toastd`) that restarts if it crashes.
+`phonelink toasts status` reports on it, `phonelink toasts demo` previews the
+look with sample toasts, and `phonelink toasts off` gives KDE Connect its
+popups back.
+
 ## Tuning
 
 ```sh
@@ -155,6 +189,9 @@ PHONELINK_DISPLAY_SIZE='1920x1080/240'                   # geometry for `desk`
 - `~/.config/hypr/hyprland.lua` — scrcpy window rules: fully opaque and unblurred
   (it is video), and no idle-lock while it has focus; plus a float rule for KDE
   Connect's reply window
+- `~/.config/systemd/user/phonelink-toastd.service` — the notification toasts
+- `~/.config/kdeconnect.notifyrc` — silences KDE Connect's own popup for phone
+  notifications only, in a marked block that `phonelink toasts off` removes
 
 Re-running `install.sh` after an update adds only the pieces you are missing,
 matched against the rules themselves rather than comment text.

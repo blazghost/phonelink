@@ -1,0 +1,14 @@
+[Unit]
+Description=phonelink toasts: Phone Link-style popups for phone notifications
+Documentation=https://github.com/blazghost/phonelink
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# Through the PATH symlink install.sh makes, so it follows the checkout.
+ExecStart=%h/.local/bin/phonelink toastd
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
