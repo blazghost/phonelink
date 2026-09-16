@@ -346,7 +346,7 @@ class Toast:
             opener = Gtk.Button(label=ui.open_label(note["package"], note["app"]),
                                 focus_on_click=False, valign=Gtk.Align.CENTER)
             opener.add_css_class("flat")
-            opener.connect("clicked", lambda *_: (ui.open_in_app(note["package"]), self.close()))
+            opener.connect("clicked", lambda *_: (ui.open_in_app(note["package"], note["app"]), self.close()))
             header.append(opener)
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)

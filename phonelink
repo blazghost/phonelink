@@ -199,9 +199,30 @@ cmd_mirror() {
 
 # A virtual display is the reason to bother with scrcpy at all: the app gets its
 # own screen at desktop proportions, and the phone stays usable in your hand.
+# An Open button with no phone reachable over adb. The raw "no Android device"
+# error means nothing from a button, so say what is missing in plain words and
+# offer the one-time setup; once paired, the app it was asked for opens.
+desk_needs_setup() {
+  local pkg="${1-}" name="${PHONELINK_APP_NAME:-${1:-an app}}" choice q
+  have notify-send || die "opening $name needs wireless debugging: run phonelink pair"
+  choice=$(notify-send -a phonelink -i phone -A setup="Set up now" \
+    "Opening $name needs wireless debugging" \
+    "One-time setup: turn on Wireless debugging on the phone and pair it. After that, Open works for Signal, Messenger and every other app." \
+    2>/dev/null) || true
+  [[ $choice == setup ]] || return 0
+  have omarchy-launch-or-focus-tui || die "run in a terminal: phonelink pair"
+  printf -v q '%q' "$SELF"
+  exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
+    "bash -c '$q pair && setsid -f $q desk $pkg >/dev/null 2>&1; printf \"\\n[any key to close]\"; read -rsn1'"
+}
+
 cmd_desk() {
   need scrcpy adb
   local serial size app args=()
+  if [[ ! -t 1 ]] && ! adb_pick >/dev/null 2>&1; then
+    desk_needs_setup "${1-}"
+    return 0
+  fi
   serial=$(require_device)
   size="${PHONELINK_DISPLAY_SIZE:-1600x900/220}"
   app="${1-}"
