@@ -228,7 +228,7 @@ SMS_APPS = {"com.samsung.android.messaging", "com.google.android.apps.messaging"
             "com.android.mms", "com.android.messaging"}
 
 
-def open_in_app(package):
+def open_in_app(package, name=""):
     """Open a notification's app on the desktop, for what the notification
     can't carry: phonelink's Messages window for SMS/MMS, otherwise the Android
     app itself on a scrcpy virtual display. For Signal, Messenger or WhatsApp
@@ -238,7 +238,9 @@ def open_in_app(package):
         return
     phonelink = str(Path(__file__).resolve().parent.parent / "phonelink")
     args = [phonelink, "messages"] if package in SMS_APPS else [phonelink, "desk", package]
-    subprocess.Popen(args, start_new_session=True, stdin=subprocess.DEVNULL,
+    # The name lets a "needs setup" prompt say "Messenger", not com.facebook.orca.
+    env = dict(os.environ, PHONELINK_APP_NAME=name) if name else None
+    subprocess.Popen(args, env=env, start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -308,7 +310,8 @@ class ConversationView(Adw.Bin):
         if not hasattr(self, "opener"):
             self.opener = Gtk.Button(valign=Gtk.Align.CENTER, focus_on_click=False)
             self.opener.add_css_class("flat")
-            self.opener.connect("clicked", lambda *_: open_in_app(self.conv.get("package")))
+            self.opener.connect("clicked", lambda *_: open_in_app(self.conv.get("package"),
+                                                              self.conv.get("app", "")))
             self.header.pack_end(self.opener)
         self.opener.set_label(open_label(conv.get("package"), conv.get("app")))
         self.opener.set_visible(bool(conv.get("package")))
