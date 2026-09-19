@@ -135,15 +135,44 @@ require_device() {
 
 # ------------------------------------------------------------ kde connect ids
 
-kde_device() { kdeconnect-cli --list-available --id-only 2>/dev/null | head -1; }
+kde_prop() {  # kde_prop <device id> <property>: a device's name or type
+  busctl --user get-property org.kde.kdeconnect "/modules/kdeconnect/devices/$1" \
+    org.kde.kdeconnect.device "$2" 2>/dev/null | sed -E 's/^s "(.*)"$/\1/'
+}
+
+# The phone to talk to, out of every reachable KDE Connect device. Not simply the
+# first: a paired PC can be listed ahead of the phone, and then files, rings and
+# texts went to the PC. PHONELINK_DEVICE (an id or a name) picks one explicitly;
+# otherwise the first phone, then the first tablet. Anything else -- a desktop or
+# laptop -- is never chosen by default, so an offline phone is an error rather
+# than a quiet send to the wrong machine.
+kde_device() {
+  local ids=() id want
+  mapfile -t ids < <(kdeconnect-cli --list-available --id-only 2>/dev/null)
+  if [[ -n ${PHONELINK_DEVICE-} ]]; then
+    for id in "${ids[@]}"; do
+      [[ $id == "$PHONELINK_DEVICE" || $(kde_prop "$id" name) == "$PHONELINK_DEVICE" ]] \
+        && { printf '%s\n' "$id"; return 0; }
+    done
+    return 0
+  fi
+  for want in phone tablet; do
+    for id in "${ids[@]}"; do
+      [[ $(kde_prop "$id" type) == "$want" ]] && { printf '%s\n' "$id"; return 0; }
+    done
+  done
+}
 
 require_kde() {
   local d
   need kdeconnect-cli
   d=$(kde_device)
-  [[ -n $d ]] || die "no paired, reachable KDE Connect device.
-  Pair it with:  phonelink kde
-  Both ends must be on the same network."
+  if [[ -z $d && -n ${PHONELINK_DEVICE-} ]]; then
+    die "\"$PHONELINK_DEVICE\" (PHONELINK_DEVICE) is not reachable over KDE Connect"
+  fi
+  [[ -n $d ]] || die "the phone is not reachable over KDE Connect.
+  Open KDE Connect on the phone and check both are on the same network.
+  Not paired yet:  phonelink kde"
   printf '%s\n' "$d"
 }
 
@@ -163,6 +192,12 @@ cmd_status() {
     local avail; avail=$(kdeconnect-cli --list-available 2>/dev/null | grep -v '^0 device' || true)
     if [[ -n $avail ]]; then printf '%s\n' "$avail" | sed 's/^/  /'
     else printf '  no reachable device (paired devices may be offline)\n'; fi
+    local used; used=$(kde_device)
+    if [[ -n $used ]]; then
+      printf '  phonelink uses:    %s\n' "$(kde_prop "$used" name)"
+    else
+      printf '  phonelink uses:    %snone -- no phone reachable%s\n' "$c_red" "$c_off"
+    fi
   else
     printf '  not installed\n'
   fi
@@ -581,6 +616,8 @@ phonelink — Android on your Linux desktop
 Environment:
   PHONELINK_SCRCPY_ARGS    default scrcpy args for `mirror`  (default: --stay-awake)
   PHONELINK_DISPLAY_SIZE   virtual display for `desk`        (default: 1600x900/220)
+  PHONELINK_DEVICE         which KDE Connect device to use, by id or name
+                           (default: the first phone, then tablet; never a PC)
   PHONELINK_TOAST_POSITION bottom-right or top-right, set on the toast service
                            with `systemctl --user edit phonelink-toastd`
 EOS

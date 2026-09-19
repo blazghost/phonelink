@@ -21,6 +21,7 @@ its Contacts plugin has permission; until then threads show numbers.
 import base64
 import importlib.util
 import mimetypes
+import os
 import re
 import shutil
 import sys
@@ -183,7 +184,7 @@ def texture_from_file(path, max_px=720):
 # ----------------------------------------------------------------- the phone
 
 class Phone:
-    """KDE Connect's conversations interface for the first reachable phone."""
+    """KDE Connect's conversations interface for the reachable phone (see _find)."""
 
     def __init__(self):
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -216,6 +217,7 @@ class Phone:
                              "Introspect").unpack()[0]
         except GLib.Error:
             return None, None
+        reachable = []
         for device in re.findall(r'<node name="([^"]+)"', xml):
             try:
                 props = self._call(f"{DEVICES}/{device}", "org.freedesktop.DBus.Properties",
@@ -223,7 +225,17 @@ class Phone:
             except GLib.Error:
                 continue
             if props.get("isReachable") and props.get("isPaired", True):
-                return device, props.get("name", "Phone")
+                reachable.append((device, props.get("name", "Phone"), props.get("type", "")))
+        # Same rule as the CLI's kde_device: PHONELINK_DEVICE (id or name) if set,
+        # else the first phone, then tablet. Never a paired PC -- it may be listed
+        # first, and it has no texts.
+        want = os.environ.get("PHONELINK_DEVICE")
+        if want:
+            return next(((d, n) for d, n, _ in reachable if want in (d, n)), (None, None))
+        for kind in ("phone", "tablet"):
+            for device, name, dtype in reachable:
+                if dtype == kind:
+                    return device, name
         return None, None
 
     def subscribe(self, member, callback):
