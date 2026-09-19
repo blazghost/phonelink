@@ -209,7 +209,13 @@ popups back.
 ```sh
 PHONELINK_SCRCPY_ARGS='--stay-awake --turn-screen-off'   # defaults for `mirror`
 PHONELINK_DISPLAY_SIZE='1920x1080/240'                   # geometry for `desk`
+PHONELINK_DEVICE='Galaxy S26 Ultra'                      # which KDE Connect device
 ```
+
+phonelink talks to the first reachable **phone** (then tablet) KDE Connect knows,
+never a paired PC, so a desktop listed first can't receive your files, rings or
+texts. `phonelink status` shows which device it is using; `PHONELINK_DEVICE`
+(an id or a name) picks one explicitly.
 
 ## Desktop integration
 
