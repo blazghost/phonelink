@@ -11,13 +11,8 @@ palette Omarchy exports, then plain Adwaita dark -- so the window follows
 `omarchy theme set` like the rest of the desktop.
 """
 
-import html
-import json
 import os
-import re
-import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import gi
@@ -26,226 +21,18 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from phonelink.apps import open_in_app, open_label  # noqa: E402
+from phonelink.helper import HELPER, fetch_conversations  # noqa: E402
+from phonelink.kdeconnect import friendly_error, plain  # noqa: E402
+from phonelink.theme import build_css, load_palette  # noqa: E402
+from phonelink.widgets import avatar, clear, label, send_icon  # noqa: E402
+
 # Shared with the terminal panel on purpose: one Hyprland rule floats, centres
 # and un-dims both.
 APP_ID = "org.omarchy.phonelink"
-HELPER = os.environ.get("PHONELINK_NOTIFY_HELPER") or str(
-    Path(__file__).resolve().parent / "kdeconnect-notify.py")
 VERTICAL = Gtk.Orientation.VERTICAL
-
-# Plain Adwaita dark, for when there is no Omarchy theme to read.
-FALLBACK = {
-    "mode": "dark",
-    "background": "#1d1d20", "dark_background": "#18181b",
-    "lighter_background": "#2e2e32", "foreground": "#ffffff",
-    "muted": "#9a9a9e", "accent": "#3584e4", "selection": "#3a3a3f",
-    "red": "#e62d42", "orange": "#e66100", "yellow": "#c88800",
-    "green": "#3a944a", "cyan": "#2190a4", "blue": "#3584e4",
-    "magenta": "#9141ac",
-}
-
-# The GUM_* variables Omarchy exports, mapped onto colors.toml names.
-GUM_KEYS = {
-    "accent": "GUM_INPUT_PROMPT_FOREGROUND",
-    "foreground": "GUM_INPUT_HEADER_FOREGROUND",
-    "muted": "GUM_INPUT_PLACEHOLDER_FOREGROUND",
-    "selection": "GUM_FILTER_SELECTED_BACKGROUND",
-    "background": "GUM_INPUT_PROMPT_BACKGROUND",
-}
-
-# Initials avatars cycle through the theme's own hues rather than Adwaita's,
-# so a group chat reads as part of the palette.
-AVATAR_HUES = ("blue", "green", "magenta", "orange", "cyan", "red", "yellow")
-
-
-# --------------------------------------------------------------------- palette
-
-def is_hex(value):
-    return (isinstance(value, str) and len(value) == 7 and value.startswith("#")
-            and all(c in "0123456789abcdefABCDEF" for c in value[1:]))
-
-
-def load_palette():
-    pal = dict(FALLBACK)
-    for key, var in GUM_KEYS.items():
-        if is_hex(os.environ.get(var)):
-            pal[key] = os.environ[var]
-    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-    try:
-        theme = tomllib.loads((state / "omarchy/current/theme/colors.toml").read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        theme = {}
-    for key, value in theme.items():
-        if is_hex(value) or (key == "mode" and value in ("dark", "light")):
-            pal[key] = value
-    return pal
-
-
-def luminance(hexc):
-    def channel(c):
-        c /= 255
-        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
-    r, g, b = (int(hexc[i:i + 2], 16) for i in (1, 3, 5))
-    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-
-
-def ink_on(pal, bg):
-    """Whichever of the theme's own ink colours stays legible on `bg`."""
-    dark, light = sorted((pal["background"], pal["foreground"]), key=luminance)
-    return dark if luminance(bg) > 0.3 else light
-
-
-def build_css(p):
-    on_accent = ink_on(p, p["accent"])
-    hairline = f"alpha({p['foreground']}, 0.07)"
-    avatars = "\n".join(
-        f"avatar.color{n} {{ background-image: none; "
-        f"background-color: {p[hue]}; color: {ink_on(p, p[hue])}; }}"
-        for n, hue in ((i, AVATAR_HUES[(i - 1) % len(AVATAR_HUES)]) for i in range(1, 15)))
-    return f"""
-:root {{
-  --window-bg-color: {p['background']};
-  --window-fg-color: {p['foreground']};
-  --view-bg-color: {p['background']};
-  --view-fg-color: {p['foreground']};
-  --headerbar-bg-color: {p['dark_background']};
-  --headerbar-fg-color: {p['foreground']};
-  --headerbar-backdrop-color: {p['dark_background']};
-  --headerbar-shade-color: {hairline};
-  --sidebar-bg-color: {p['dark_background']};
-  --sidebar-fg-color: {p['foreground']};
-  --sidebar-backdrop-color: {p['dark_background']};
-  --sidebar-shade-color: {hairline};
-  --card-bg-color: {p['lighter_background']};
-  --popover-bg-color: {p['lighter_background']};
-  --accent-bg-color: {p['accent']};
-  --accent-fg-color: {on_accent};
-  --accent-color: {p['accent']};
-}}
-window {{ font-family: "Adwaita Sans", sans-serif; }}
-
-.thread {{ padding: 14px 16px 12px; }}
-.bubble {{ padding: 8px 13px; border-radius: 18px; font-size: 10.5pt; }}
-.bubble.in  {{ background: {p['lighter_background']}; color: {p['foreground']}; }}
-.bubble.out {{ background: {p['accent']}; color: {on_accent}; }}
-.bubble.in.head  {{ border-top-left-radius: 6px; }}
-.bubble.out.head {{ border-top-right-radius: 6px; }}
-.sender {{ font-size: 8.5pt; font-weight: 600; color: {p['muted']}; margin: 0 0 3px 3px; }}
-.meta   {{ font-size: 8pt; color: {p['muted']}; margin: 3px 4px 0; }}
-
-headerbar button.flat {{ font-size: 9pt; font-weight: 600; color: {p['accent']};
-                         min-height: 28px; padding: 0 10px; border-radius: 999px; }}
-.title-name {{ font-weight: 700; font-size: 11pt; }}
-.title-app  {{ font-size: 8.5pt; color: {p['muted']}; }}
-
-.compose {{ background: {p['dark_background']}; padding: 10px 12px 12px;
-            border-top: 1px solid {hairline}; }}
-.compose entry {{ border-radius: 999px; min-height: 40px; padding: 0 16px;
-                  background: {p['lighter_background']}; color: {p['foreground']};
-                  box-shadow: none; outline: none; }}
-.compose entry:focus-within {{ box-shadow: inset 0 0 0 1px alpha({p['accent']}, 0.65); }}
-.compose .send {{ border-radius: 999px; min-width: 40px; min-height: 40px; padding: 0;
-                  background: {p['accent']}; color: {on_accent}; }}
-.compose .send:disabled {{ background: {p['lighter_background']}; color: {p['muted']}; }}
-
-.convo-list {{ background: transparent; }}
-.convo-list row {{ border-radius: 10px; margin: 2px 6px; padding: 8px; }}
-.convo-list row:selected {{ background: {p['selection']}; }}
-.convo-name    {{ font-weight: 600; font-size: 10pt; }}
-.convo-preview {{ font-size: 9pt; color: {p['muted']}; }}
-.convo-app     {{ font-size: 8pt; color: {p['muted']}; }}
-{avatars}
-"""
-
-
-# ---------------------------------------------------------------------- helper
-
-def plain(text):
-    return html.unescape(re.sub(r"<[^>]+>", " ", text or "")).strip()
-
-
-def fetch_conversations():
-    """(conversations, error) from the helper's `list`."""
-    try:
-        run = subprocess.run([HELPER, "list"], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, f"Could not run the notification helper: {exc}"
-    if run.returncode != 0:
-        return None, run.stderr.strip() or "The notification helper failed."
-    try:
-        return json.loads(run.stdout or "[]"), None
-    except json.JSONDecodeError:
-        return None, "The notification helper did not return JSON."
-
-
-def friendly_error(message):
-    """The helper's errors are worded for a terminal; a toast wants the cause."""
-    msg = (message or "").strip().removeprefix("reply failed: ")
-    if "UnknownObject" in msg or "No such object" in msg:
-        # Read, dismissed or answered on the phone: the reply target went with it.
-        return "That notification is gone from the phone"
-    if "ServiceUnknown" in msg or "not provided by any" in msg:
-        return "KDE Connect isn't running"
-    if "NoReply" in msg or "timed out" in msg.lower():
-        return "The phone didn't answer — is it on the same network?"
-    return msg.splitlines()[-1] if msg else "Couldn't send the reply"
-
-
-# --------------------------------------------------------------------- widgets
-
-def avatar(name, size, icon=None):
-    widget = Adw.Avatar(size=size, text=name or "?", show_initials=True)
-    if icon and os.path.isfile(icon):
-        try:
-            widget.set_custom_image(Gdk.Texture.new_from_filename(icon))
-        except GLib.Error:
-            pass  # a truncated or odd image: the initials are fine
-    return widget
-
-
-def label(text, css, **kw):
-    widget = Gtk.Label(label=text, xalign=0, **kw)
-    widget.add_css_class(css)
-    return widget
-
-
-def clear(box):
-    while child := box.get_first_child():
-        box.remove(child)
-
-
-def send_icon():
-    theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
-    for name in ("paper-plane-symbolic", "mail-send-symbolic", "go-next-symbolic"):
-        if theme.has_icon(name):
-            return name
-    return "go-next-symbolic"
-
-
-# The phone's own texting apps. Their photos and videos are reachable through
-# KDE Connect, so "open" means phonelink's Messages window, not the app.
-SMS_APPS = {"com.samsung.android.messaging", "com.google.android.apps.messaging",
-            "com.android.mms", "com.android.messaging"}
-
-
-def open_in_app(package, name=""):
-    """Open a notification's app on the desktop, for what the notification
-    can't carry: phonelink's Messages window for SMS/MMS, otherwise the Android
-    app itself on a scrcpy virtual display. For Signal, Messenger or WhatsApp
-    that is the only way to see the photos, videos and the rest of the thread.
-    """
-    if not package:
-        return
-    phonelink = str(Path(__file__).resolve().parent.parent / "phonelink")
-    args = [phonelink, "messages"] if package in SMS_APPS else [phonelink, "desk", package]
-    # The name lets a "needs setup" prompt say "Messenger", not com.facebook.orca.
-    env = dict(os.environ, PHONELINK_APP_NAME=name) if name else None
-    subprocess.Popen(args, env=env, start_new_session=True, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def open_label(package, app):
-    return "Open Messages" if package in SMS_APPS else f"Open {app or 'app'}"
 
 
 class ConversationView(Adw.Bin):

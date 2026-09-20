@@ -22,7 +22,6 @@ gtk4-layer-shell has to be loaded before GTK, so run this through
     phonelink-toastd.py --show ID   draw one existing phone notification now
 """
 
-import importlib.util
 import json
 import os
 import re
@@ -40,23 +39,14 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
-
-def _load(name, filename):
-    spec = importlib.util.spec_from_file_location(name, HERE / filename)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# The reply window already reads the theme, draws avatars and words errors; the
-# helper already reads and parses notifications. Reuse both rather than fork.
-ui = _load("phonelink_reply", "phonelink-reply-gtk.py")
-kn = _load("kdeconnect_notify", "kdeconnect-notify.py")
+from phonelink import apps, kdeconnect as kde, theme, widgets  # noqa: E402
+from phonelink.helper import HELPER  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.toasts"
-PLUGIN_IFACE = "org.kde.kdeconnect.device.notifications"
-DEVICES = "/modules/kdeconnect/devices/"
+PLUGIN_IFACE = kde.NOTIF_PLUGIN_IFACE
+DEVICES = kde.DEVICES + "/"
 STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
 MAX_TOASTS = 3
 VERTICAL = Gtk.Orientation.VERTICAL
@@ -127,17 +117,17 @@ def text_label(text, css, **kw):
     would stretch the card past Omarchy's width. max_width_chars=1 drops the
     request to nothing; hexpand then hands it the card's width to wrap within.
     """
-    return ui.label(text, css, max_width_chars=1, hexpand=True, **kw)
+    return widgets.label(text, css, max_width_chars=1, hexpand=True, **kw)
 
 
 class Look:
     """Omarchy's notification card, measured from the live theme and Hyprland."""
 
     def __init__(self):
-        self.pal = ui.load_palette()
-        theme = STATE / "omarchy/current/theme"
-        notif = read_toml(theme / "shell.notifications.toml").get("notifications", {})
-        font = {**read_toml(theme / "shell.toml").get("font", {}),
+        self.pal = theme.load_palette()
+        current = STATE / "omarchy/current/theme"
+        notif = read_toml(current / "shell.notifications.toml").get("notifications", {})
+        font = {**read_toml(current / "shell.toml").get("font", {}),
                 **read_toml(Path.home() / ".config/omarchy/shell.toml").get("font", {})}
         base = font.get("base-size")
         base = base if isinstance(base, (int, float)) and base > 0 else 12
@@ -156,7 +146,7 @@ class Look:
         self.margin = round(int(gaps[0]) / 2) if gaps and gaps[0].isdigit() else 7  # Style.gapsOut
 
         def colour(key, default):
-            return notif.get(key) if ui.is_hex(notif.get(key)) else default
+            return notif.get(key) if theme.is_hex(notif.get(key)) else default
 
         self.bg = colour("background", self.pal["dark_background"])
         self.bg_alpha = float(notif.get("background-alpha", 0.97))
@@ -164,7 +154,7 @@ class Look:
         self.countdown = colour("countdown", self.pal["accent"])
         self.border_w = int(notif.get("border-width", 2))
         border = notif.get("border", "hyprland.active-border")
-        if ui.is_hex(border):
+        if theme.is_hex(border):
             self.border_angle, self.border_colours = 90, [border]
         else:
             self.border_angle, self.border_colours = active_border(self.pal["accent"])
@@ -176,7 +166,7 @@ class Look:
 
     def css(self):
         p = self.pal
-        on_accent = ui.ink_on(p, p["accent"])
+        on_accent = theme.ink_on(p, p["accent"])
         stops = self.border_colours * (2 if len(self.border_colours) == 1 else 1)
         inner = max(0, self.radius - self.border_w)
         return f"""
@@ -212,35 +202,14 @@ window.phonelink-toast {{ background: transparent; }}
 
 # -------------------------------------------------------------- notifications
 
-def read_note(objpath):
-    """A phone notification as the toast needs it, or None if it has gone."""
-    # A signal naming something that is not an object path at all: GLib refuses
-    # to make the call and hands back None rather than raising, so check first.
-    if not GLib.Variant.is_object_path(objpath):
-        return None
-    try:
-        reply = kn.call(objpath, kn.PROPS, "GetAll", GLib.Variant("(s)", (kn.NOTIF_IFACE,)))
-    except GLib.Error:
-        return None
-    if reply is None:
-        return None
-    props = reply.unpack()[0]
-    text, ticker = props.get("text", ""), props.get("ticker", "")
-    return {
-        "path": objpath, "app": props.get("appName", ""), "title": props.get("title", ""),
-        "text": text, "ticker": ticker,
-        "thread": kn.parse_thread(text) or kn.parse_thread(ticker),
-        "icon": kn.icon_path(props),
-        "package": (props.get("internalId", "").split("|") + ["", ""])[1],
-        "repliable": bool(props.get("replyId")),
-        "silent": bool(props.get("silent")),
-    }
+# One reader for a notification, shared with the helper and the reply window:
+# when the phone starts carrying a new field, it is added in one place.
+read_note = kde.read_note
 
 
 def find_note(nid):
-    for device in kn.children(DEVICES.rstrip("/")):
-        objpath = f"{DEVICES}{device}/notifications/{nid}"
-        if note := read_note(objpath):
+    for device in kde.children(kde.DEVICES):
+        if note := read_note(f"{DEVICES}{device}/notifications/{nid}"):
             return note
     return None
 
@@ -269,7 +238,7 @@ DEMO_THREAD = ("<b>Amos Burton</b><br/>Reactor's back online<br/>"
 def demo_notes():
     def note(i, app, package, title, text, repliable):
         return {"path": f"demo:{i}", "app": app, "package": package, "title": title,
-                "text": text, "ticker": "", "thread": kn.parse_thread(text), "icon": "",
+                "text": text, "ticker": "", "thread": kde.parse_thread(text), "icon": "",
                 "repliable": repliable, "silent": False}
     return [note(1, "Signal", "org.thoughtcrime.securesms", "Rocinante crew", DEMO_THREAD, True),
             note(2, "Instagram", "com.instagram.android", "bobbie.draper", "liked your reel", False),
@@ -335,24 +304,24 @@ class Toast:
             last = thread[-1]
             who = (last.get("sender") or "").split()
             return f"{who[0]}: {last['body']}" if who else last["body"]
-        return ui.plain(self.note.get("text") or self.note.get("ticker"))
+        return kde.plain(self.note.get("text") or self.note.get("ticker"))
 
     def build(self):
         typed = self.entry.get_text() if self.entry else ""
         had_focus = bool(self.entry and self.entry.has_focus())
-        ui.clear(self.content)
+        widgets.clear(self.content)
         note, look = self.note, self.daemon.look
 
         header = Gtk.Box(spacing=6)
-        header.append(ui.label("󰄜", "app-glyph"))
+        header.append(widgets.label("󰄜", "app-glyph"))
         header.append(text_label(note["app"] or "Phone", "app", ellipsize=Pango.EllipsizeMode.END))
         if note.get("package"):
             # Photos, videos and the rest of the thread never travel in a
             # notification; this opens the app that has them.
-            opener = Gtk.Button(label=ui.open_label(note["package"], note["app"]),
+            opener = Gtk.Button(label=apps.open_label(note["package"], note["app"]),
                                 focus_on_click=False, valign=Gtk.Align.CENTER)
             opener.add_css_class("flat")
-            opener.connect("clicked", lambda *_: (ui.open_in_app(note["package"], note["app"]), self.close()))
+            opener.connect("clicked", lambda *_: (apps.open_in_app(note["package"], note["app"]), self.close()))
             header.append(opener)
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)
@@ -362,7 +331,7 @@ class Toast:
         self.content.append(header)
 
         main = Gtk.Box(spacing=look.pad_h)
-        av = ui.avatar(note["title"] or note["app"], look.icon, note.get("icon"))
+        av = widgets.avatar(note["title"] or note["app"], look.icon, note.get("icon"))
         av.set_valign(Gtk.Align.START)
         main.append(av)
         text = Gtk.Box(orientation=VERTICAL, spacing=2, hexpand=True)
@@ -387,7 +356,7 @@ class Toast:
             self.entry = Gtk.Entry(hexpand=True, placeholder_text="Reply", text=typed)
             self.entry.connect("activate", self.send)
             self.entry.connect("changed", lambda *_: self.sync_send())
-            self.send_btn = Gtk.Button(icon_name=ui.send_icon(), valign=Gtk.Align.CENTER,
+            self.send_btn = Gtk.Button(icon_name=widgets.send_icon(), valign=Gtk.Align.CENTER,
                                        tooltip_text="Send", focus_on_click=False)
             self.send_btn.add_css_class("send")
             self.send_btn.connect("clicked", self.send)
@@ -471,7 +440,7 @@ class Toast:
             self.busy = False
             self.entry.set_editable(True)
             self.sync_send()
-            self.error.set_label(ui.friendly_error(err))
+            self.error.set_label(kde.friendly_error(err))
             self.error.set_visible(True)
             self.entry.grab_focus_without_selecting()
             self.daemon.restack()
@@ -480,7 +449,7 @@ class Toast:
         self.content.remove(row)
         self.content.remove(self.error)
         self.entry = self.send_btn = self.error = None
-        self.content.append(ui.label("✓ Sent", "sent", margin_start=self.daemon.look.icon
+        self.content.append(widgets.label("✓ Sent", "sent", margin_start=self.daemon.look.icon
                                      + self.daemon.look.pad_h))
         self.daemon.restack()
         GLib.timeout_add(1200, lambda: self.close() or False)
@@ -497,7 +466,7 @@ class Daemon:
             Adw.ColorScheme.FORCE_LIGHT if self.look.pal.get("mode") == "light"
             else Adw.ColorScheme.FORCE_DARK)
         css = Gtk.CssProvider()
-        css.load_from_string(ui.build_css(self.look.pal) + self.look.css())
+        css.load_from_string(theme.build_css(self.look.pal) + self.look.css())
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
@@ -511,15 +480,15 @@ class Daemon:
             # PHONELINK_TOAST_ANY_SENDER=1 lifts the check, for tests that emit
             # the signals themselves rather than waiting for a message to arrive.
             loose = os.environ.get("PHONELINK_TOAST_ANY_SENDER", "") not in ("", "0")
-            sender = None if loose else kn.SERVICE
-            kn.BUS.signal_subscribe(sender, PLUGIN_IFACE, None, None, None,
+            sender = None if loose else kde.SERVICE
+            kde.BUS.signal_subscribe(sender, PLUGIN_IFACE, None, None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_signal)
             # Updates need a hook of their own. KDE Connect re-shows an existing
             # notification's popup on every non-silent update -- a second
             # message in the same chat -- but announces it on no plugin signal:
             # notificationUpdated is declared and never emitted. The object's
             # own `ready` fires on each (re)show, so that is the one to follow.
-            kn.BUS.signal_subscribe(sender, kn.NOTIF_IFACE, "ready", None, None,
+            kde.BUS.signal_subscribe(sender, kde.NOTIF_IFACE, "ready", None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_ready)
             print("phonelink toasts: listening for phone notifications", flush=True)
         elif self.mode == "demo":
@@ -601,7 +570,7 @@ class Daemon:
                                                "reply failed: No such object path") or False)
             return
         try:
-            proc = Gio.Subprocess.new([ui.HELPER, "send", note["path"], text],
+            proc = Gio.Subprocess.new([HELPER, "send", note["path"], text],
                                       Gio.SubprocessFlags.STDOUT_SILENCE
                                       | Gio.SubprocessFlags.STDERR_PIPE)
         except GLib.Error as exc:
