@@ -1,0 +1,32 @@
+name: checks
+
+# Every push and every pull request: the same checks tests/run.sh runs locally,
+# plus ruff. No phone is involved -- the D-Bus tests talk to a fake KDE Connect
+# on a private bus.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install what the checks need
+        run: |
+          sudo apt-get update -qq
+          # python3-gi brings GLib and Gio; dbus-daemon backs dbus-run-session.
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-glib-2.0 dbus shellcheck
+          python3 -c "import gi; from gi.repository import Gio, GLib; print('gi ok')"
+
+      - name: Lint
+        run: |
+          pipx install ruff || pip install --break-system-packages ruff
+          ruff check lib tests
+
+      - name: Shell, syntax, unit and D-Bus tests
+        run: tests/run.sh

@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""A stand-in for kdeconnectd, for tests that must not touch the real phone.
+
+Owns org.kde.kdeconnect on whatever bus it is started on and exposes two
+devices -- a desktop listed first, then the phone, which is the arrangement
+that used to send files and texts to the wrong machine -- with a handful of
+notifications on the phone.
+
+Run it only on a private bus (`dbus-run-session`): on the real session bus it
+would fight the actual daemon for the name.
+
+    dbus-run-session -- python3 tests/fake_kdeconnect.py
+"""
+
+import sys
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+SERVICE = "org.kde.kdeconnect"
+DEVICES = "/modules/kdeconnect/devices"
+DEVICE_IFACE = "org.kde.kdeconnect.device"
+NOTIF_IFACE = "org.kde.kdeconnect.device.notifications.notification"
+
+DESKTOP = "aaaa0000aaaa0000aaaa0000aaaa0000"
+PHONE = "bbbb1111bbbb1111bbbb1111bbbb1111"
+
+DEVICES_DATA = {
+    # The desktop sorts first, exactly as the paired PC did on the real bus.
+    DESKTOP: {"name": "Roci", "type": "desktop", "isReachable": True, "isPaired": True},
+    PHONE: {"name": "Test Phone", "type": "phone", "isReachable": True, "isPaired": True},
+}
+
+NOTES = {
+    "1": {"appName": "Reddit", "title": "Reddit", "text": "Someone replied",
+          "ticker": "Reddit: Someone replied", "replyId": "", "silent": False,
+          "internalId": "0|com.reddit.frontpage|1||10123", "isConversation": False,
+          "hasIcon": False, "iconPath": ""},
+    "2": {"appName": "Messenger", "title": "Naomi Nagata",
+          "text": "<b>Naomi Nagata</b><br/>Docking in ten&nbsp;minutes<br/>"
+                  "<b>Alex Kamal</b><br/>Copy that",
+          "ticker": "Naomi Nagata: Docking in ten minutes", "replyId": "reply-2",
+          "silent": False, "internalId": "0|com.facebook.orca|2|tag|10222",
+          "isConversation": True, "hasIcon": False, "iconPath": ""},
+    "3": {"appName": "Messages", "title": "(555) 010-1234", "text": "On my way",
+          "ticker": "(555) 010-1234: On my way", "replyId": "reply-3", "silent": True,
+          "internalId": "0|com.android.messaging|3||10333", "isConversation": True,
+          "hasIcon": False, "iconPath": ""},
+}
+
+DEVICE_XML = f"""
+<node>
+  <interface name="{DEVICE_IFACE}">
+    <property name="name" type="s" access="read"/>
+    <property name="type" type="s" access="read"/>
+    <property name="isReachable" type="b" access="read"/>
+    <property name="isPaired" type="b" access="read"/>
+  </interface>
+</node>
+"""
+
+NOTIF_XML = f"""
+<node>
+  <interface name="{NOTIF_IFACE}">
+    <method name="sendReply"><arg name="message" type="s" direction="in"/></method>
+    <method name="dismiss"/>
+    <property name="appName" type="s" access="read"/>
+    <property name="title" type="s" access="read"/>
+    <property name="text" type="s" access="read"/>
+    <property name="ticker" type="s" access="read"/>
+    <property name="replyId" type="s" access="read"/>
+    <property name="silent" type="b" access="read"/>
+    <property name="internalId" type="s" access="read"/>
+    <property name="isConversation" type="b" access="read"/>
+    <property name="hasIcon" type="b" access="read"/>
+    <property name="iconPath" type="s" access="read"/>
+  </interface>
+</node>
+"""
+
+# Replies land here, and `sent` prints them, so a test can check what was said
+# without a phone anywhere.
+SENT = []
+
+
+def variant(value):
+    return GLib.Variant("b", value) if isinstance(value, bool) else GLib.Variant("s", value)
+
+
+def register(bus, path, xml, props, on_call=None):
+    info = Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0]
+
+    def method(_c, _sender, _path, _iface, name, params, invocation):
+        if on_call:
+            on_call(name, params)
+        invocation.return_value(None)
+
+    def get_prop(_c, _sender, _path, _iface, name):
+        return variant(props[name]) if name in props else None
+
+    # register_object is deprecated, and the closures spelling has changed over
+    # PyGObject versions, so take whichever this one has.
+    register_object = (getattr(bus, "register_object_with_closures2", None)
+                       or getattr(bus, "register_object_with_closures", None)
+                       or bus.register_object)
+    register_object(path, info, method, get_prop, None)
+
+
+def main():
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+    # Never fight the real daemon: if the name is taken, this is not a private
+    # bus and the tests would be reading a real phone.
+    owned = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                          "org.freedesktop.DBus", "NameHasOwner",
+                          GLib.Variant("(s)", (SERVICE,)), None,
+                          Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+    if owned:
+        sys.exit(f"{SERVICE} is already on this bus: run under dbus-run-session")
+
+    for device, props in DEVICES_DATA.items():
+        register(bus, f"{DEVICES}/{device}", DEVICE_XML, props)
+
+    for nid, props in NOTES.items():
+        path = f"{DEVICES}/{PHONE}/notifications/{nid}"
+
+        def sent(name, params, path=path):
+            if name == "sendReply":
+                SENT.append((path, params.unpack()[0]))
+                print(f"reply {path} {params.unpack()[0]}", flush=True)
+
+        register(bus, path, NOTIF_XML, props, sent)
+
+    loop = GLib.MainLoop()
+    held = []
+
+    def acquired(*_):
+        held.append(True)
+        print("fake kdeconnect: ready", flush=True)
+
+    def lost(*_):
+        # Losing it after the bus goes away is just the end of the test run.
+        if not held:
+            sys.exit("fake kdeconnect: could not take the name -- real daemon on this bus?")
+        loop.quit()
+
+    Gio.bus_own_name(Gio.BusType.SESSION, SERVICE, Gio.BusNameOwnerFlags.NONE, None,
+                     acquired, lost)
+    loop.run()
+
+
+if __name__ == "__main__":
+    main()

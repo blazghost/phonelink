@@ -637,7 +637,7 @@ EOS
 # GTK app (lib/phonelink-toastd.py) running as a systemd user service.
 
 TOAST_UNIT=phonelink-toastd.service
-KDEC_UNIT=app-org.kde.kdeconnect.daemon@autostart.service
+KDEC_UNIT="app-org.kde.kdeconnect.daemon@autostart.service"
 NOTIFYRC="${XDG_CONFIG_HOME:-$HOME/.config}/kdeconnect.notifyrc"
 NOTIFYRC_MARK='# >>> phonelink toasts'
 

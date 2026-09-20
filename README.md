@@ -232,3 +232,39 @@ texts. `phonelink status` shows which device it is using; `PHONELINK_DEVICE`
 
 Re-running `install.sh` after an update adds only the pieces you are missing,
 matched against the rules themselves rather than comment text.
+
+## Working on phonelink
+
+```
+phonelink                   the command itself: bash over KDE Connect, scrcpy, adb and LocalSend
+lib/phonelink-reply-gtk.py  the reply window
+lib/phonelink-toastd.py     the notification toasts (a systemd user service)
+lib/phonelink-messages.py   the Messages window
+lib/kdeconnect-notify.py    list and answer notifications from a shell
+lib/phonelink/              what those share:
+    theme.py                the Omarchy palette and the CSS built from it
+    widgets.py              avatars, labels, the send icon, pictures
+    apps.py                 opening a notification's app on the desktop
+    kdeconnect.py           devices, notifications and replies over D-Bus
+    helper.py               the same as a subprocess, so a window can be stubbed
+    sms.py                  numbers, contacts, dates, the SMS/MMS message
+tests/                      the checks below
+```
+
+Notifications are read in one place, `kdeconnect.read_note`, so a new field the
+phone starts sending is added once rather than in each program.
+
+```bash
+tests/run.sh          # shell syntax, shellcheck, ruff, Python syntax, all tests
+tests/run.sh unit     # the unit tests alone
+tests/run.sh dbus     # the D-Bus tests alone
+```
+
+The unit tests need nothing but Python and PyGObject. The D-Bus tests run
+against `tests/fake_kdeconnect.py`, a stand-in daemon with a desktop and a
+phone on it, on a private bus (`dbus-run-session`) -- so no phone is involved
+and a test reply cannot reach a real contact. The fake refuses to start on a bus
+where the real KDE Connect already is.
+
+GitHub runs all of it on every pull request (`.github/workflows/ci.yml`).
+`shellcheck` and `ruff` are used when installed and skipped when not.
