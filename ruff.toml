@@ -1,0 +1,7 @@
+# Lint settings for CI. Deliberately narrow: the rules that catch mistakes
+# (undefined names, unused imports, syntax errors), not a house style. The
+# existing code sits comfortably inside 120 columns.
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "W"]

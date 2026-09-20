@@ -18,11 +18,7 @@ Names and photos come from the contacts KDE Connect syncs from the phone when
 its Contacts plugin has permission; until then threads show numbers.
 """
 
-import base64
-import importlib.util
 import mimetypes
-import os
-import re
 import shutil
 import sys
 import time
@@ -33,21 +29,15 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
-
-def _load(name, filename):
-    spec = importlib.util.spec_from_file_location(name, HERE / filename)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# The reply window already reads the theme, draws avatars and words errors.
-ui = _load("phonelink_reply", "phonelink-reply-gtk.py")
+from phonelink import kdeconnect as kde  # noqa: E402
+from phonelink.sms import (FAILED, PAGE, Msg, day_label, load_contacts,  # noqa: E402
+                           number_key, pretty_number, when)
+from phonelink import theme, widgets  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.messages"
 SERVICE = "org.kde.kdeconnect"
@@ -55,130 +45,30 @@ DEVICES = "/modules/kdeconnect/devices"
 DEVICE_IFACE = "org.kde.kdeconnect.device"
 CONV_IFACE = "org.kde.kdeconnect.device.conversations"
 VERTICAL = Gtk.Orientation.VERTICAL
-PAGE = 50            # messages asked for per page of a thread
 AUTO_FETCH = 12      # newest pictures in an open thread fetched full-size unasked
 MEDIA_W = 240        # width of a picture or video in a bubble
-OUTGOING = {2, 4, 5, 6}  # Android: sent, outbox, failed, queued
-FAILED = 5
 MMS_SOFT_LIMIT = 1_500_000  # bytes; carriers commonly reject MMS much above this
 HUNG = "KDE Connect isn't answering. `phonelink kde restart` brings it back."
 
 
 # --------------------------------------------------------------- the message
 
-class Att:
-    __slots__ = ("part", "mime", "thumb", "uid")
-
-    def __init__(self, part, mime, thumb, uid):
-        self.part, self.mime, self.thumb, self.uid = part, mime, thumb, uid
-
-    @property
-    def kind(self):
-        return self.mime.split("/")[0]
 
 
-class Msg:
-    """One entry of KDE Connect's (isa(s)xiixixa(xsss)) ConversationMessage."""
-    __slots__ = ("body", "addresses", "date", "type", "read", "thread", "uid", "attachments")
-
-    def __init__(self, variant):
-        t = variant.unpack()
-        self.body, self.date, self.type, self.read = t[1], t[3], t[4], t[5]
-        self.addresses = [a[0] for a in t[2]]
-        self.thread, self.uid = t[6], t[7]
-        self.attachments = [Att(*a) for a in t[9]]
-
-    @property
-    def outgoing(self):
-        return self.type in OUTGOING
 
 
-def number_key(number):
-    """Phone numbers compare by their last ten digits: +1 555..., 555... match."""
-    digits = re.sub(r"\D", "", number or "")
-    return digits[-10:] if len(digits) >= 10 else digits
 
 
-def pretty_number(number):
-    digits = re.sub(r"\D", "", number or "")
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
-    if len(digits) == 10:
-        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
-    return number or "Unknown"
 
 
-def load_contacts(device_id):
-    """{number key: (name, photo bytes)} from the vCards KDE Connect syncs."""
-    book = {}
-    folder = Path(GLib.get_user_data_dir()) / "kpeoplevcard" / f"kdeconnect-{device_id}"
-    for card in sorted(folder.glob("*.vcf")) if folder.is_dir() else []:
-        try:
-            raw = card.read_text(errors="replace")
-        except OSError:
-            continue
-        name, tels, photo = "", [], None
-        for line in re.sub(r"\r?\n[ \t]", "", raw).splitlines():  # unfold
-            head, _, value = line.partition(":")
-            key = head.split(";")[0].upper()
-            if key == "FN":
-                name = value.strip()
-            elif key == "TEL":
-                tels.append(value)
-            elif key == "PHOTO" and value:
-                data = value.split(",", 1)[1] if value.startswith("data:") else value
-                try:
-                    photo = base64.b64decode(data)
-                except ValueError:
-                    photo = None
-        for tel in tels:
-            if k := number_key(tel):
-                book.setdefault(k, (name, photo))
-    return book
 
 
-def when(ms):
-    """List-row time: 4:05 PM, Yesterday, Mon, Sep 3, Sep 3, 2025."""
-    dt, now = datetime.fromtimestamp(ms / 1000), datetime.now()
-    days = (now.date() - dt.date()).days
-    if days == 0:
-        return dt.strftime("%-I:%M %p")
-    if days == 1:
-        return "Yesterday"
-    if days < 7:
-        return dt.strftime("%a")
-    return dt.strftime("%b %-d" if dt.year == now.year else "%b %-d, %Y")
 
 
-def day_label(ms):
-    dt, now = datetime.fromtimestamp(ms / 1000), datetime.now()
-    days = (now.date() - dt.date()).days
-    if days == 0:
-        return "Today"
-    if days == 1:
-        return "Yesterday"
-    return dt.strftime("%A, %B %-d" if dt.year == now.year else "%A, %B %-d, %Y")
 
 
-def texture_from_b64(data):
-    try:
-        loader = GdkPixbuf.PixbufLoader()
-        loader.write(base64.b64decode(data))
-        loader.close()
-        return Gdk.Texture.new_for_pixbuf(loader.get_pixbuf())
-    except (GLib.Error, ValueError, TypeError):
-        return None
 
 
-def texture_from_file(path, max_px=720):
-    """(texture, width, height), upright and scaled down; HEIC/AVIF/WebP included."""
-    try:
-        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, max_px, max_px, True)
-    except GLib.Error:
-        return None, 0, 0
-    # Phone cameras record rotation in EXIF rather than rotating the pixels.
-    pixbuf = pixbuf.apply_embedded_orientation() or pixbuf
-    return Gdk.Texture.new_for_pixbuf(pixbuf), pixbuf.get_width(), pixbuf.get_height()
 
 
 # ----------------------------------------------------------------- the phone
@@ -212,31 +102,13 @@ class Phone:
                       Gio.DBusCallFlags.NONE, 20000, None, done)
 
     def _find(self):
-        try:
-            xml = self._call(DEVICES, "org.freedesktop.DBus.Introspectable",
-                             "Introspect").unpack()[0]
-        except GLib.Error:
-            return None, None
-        reachable = []
-        for device in re.findall(r'<node name="([^"]+)"', xml):
-            try:
-                props = self._call(f"{DEVICES}/{device}", "org.freedesktop.DBus.Properties",
-                                   "GetAll", GLib.Variant("(s)", (DEVICE_IFACE,))).unpack()[0]
-            except GLib.Error:
-                continue
-            if props.get("isReachable") and props.get("isPaired", True):
-                reachable.append((device, props.get("name", "Phone"), props.get("type", "")))
-        # Same rule as the CLI's kde_device: PHONELINK_DEVICE (id or name) if set,
-        # else the first phone, then tablet. Never a paired PC -- it may be listed
-        # first, and it has no texts.
-        want = os.environ.get("PHONELINK_DEVICE")
-        if want:
-            return next(((d, n) for d, n, _ in reachable if want in (d, n)), (None, None))
-        for kind in ("phone", "tablet"):
-            for device, name, dtype in reachable:
-                if dtype == kind:
-                    return device, name
-        return None, None
+        """The phone to open, by the rule the whole of phonelink uses.
+
+        Never simply the first device: a paired PC can be listed ahead of the
+        phone, and it has no texts at all.
+        """
+        chosen = kde.pick_device(kde.devices())
+        return (chosen["id"], chosen["name"]) if chosen else (None, None)
 
     def subscribe(self, member, callback):
         self.bus.signal_subscribe(SERVICE, CONV_IFACE, member, self.path, None,
@@ -389,7 +261,7 @@ class ThreadView(Adw.Bin):
         self.entry = Gtk.Entry(hexpand=True, placeholder_text="Text message")
         self.entry.connect("activate", self.send)
         self.entry.connect("changed", lambda *_: self.sync_send())
-        self.send_btn = Gtk.Button(icon_name=ui.send_icon(), valign=Gtk.Align.CENTER,
+        self.send_btn = Gtk.Button(icon_name=widgets.send_icon(), valign=Gtk.Align.CENTER,
                                    tooltip_text="Send", sensitive=False, focus_on_click=False)
         self.send_btn.add_css_class("send")
         self.send_btn.connect("clicked", self.send)
@@ -421,12 +293,12 @@ class ThreadView(Adw.Bin):
         self.pending.clear()
         self.sync_pending()
         title, subtitle, photo = self.win.people(tid)
-        ui.clear(self.who)
+        widgets.clear(self.who)
         self.who.append(self.win.avatar_for(title, 34, photo))
         names = Gtk.Box(orientation=VERTICAL, valign=Gtk.Align.CENTER)
-        names.append(ui.label(title, "title-name", ellipsize=Pango.EllipsizeMode.END))
+        names.append(widgets.label(title, "title-name", ellipsize=Pango.EllipsizeMode.END))
         if subtitle:
-            names.append(ui.label(subtitle, "title-app"))
+            names.append(widgets.label(subtitle, "title-app"))
         self.who.append(names)
         self.entry.set_placeholder_text("Text message" if not subtitle or "," in title
                                         else f"Text {title}")
@@ -455,7 +327,7 @@ class ThreadView(Adw.Bin):
         if self.tid is None:
             return
         stick = stick or self.at_bottom()
-        ui.clear(self.thread)
+        widgets.clear(self.thread)
         msgs = sorted(self.win.threads.get(self.tid, {}).values(), key=lambda m: m.date)
         if len(msgs) >= 20 and self.win.more.get(self.tid, True):
             more = Gtk.Button(label="Load earlier messages", halign=Gtk.Align.CENTER)
@@ -487,7 +359,7 @@ class ThreadView(Adw.Bin):
         col = Gtk.Box(orientation=VERTICAL, spacing=4,
                       halign=Gtk.Align.END if m.outgoing else Gtk.Align.START)
         if sender:
-            col.append(ui.label(self.win.name_for(sender), "sender"))
+            col.append(widgets.label(self.win.name_for(sender), "sender"))
         for att in m.attachments:
             col.append(self.media(att, m, fetch=att.uid in auto))
         if m.body.strip():
@@ -513,7 +385,7 @@ class ThreadView(Adw.Bin):
 
         pic = Gtk.Picture(content_fit=Gtk.ContentFit.COVER, can_shrink=True)
         pic.set_size_request(MEDIA_W, MEDIA_W)
-        if tex := texture_from_b64(att.thumb):
+        if tex := widgets.texture_from_b64(att.thumb):
             pic.set_paintable(tex)
         frame = Gtk.Overlay(child=pic, overflow=Gtk.Overflow.HIDDEN,
                             halign=Gtk.Align.END if m.outgoing else Gtk.Align.START)
@@ -538,7 +410,7 @@ class ThreadView(Adw.Bin):
 
     def sharpen(self, pic, path):
         """Swap the 100px thumbnail for the real picture, at its real shape."""
-        tex, w, h = texture_from_file(path)
+        tex, w, h = widgets.texture_from_file(path)
         if tex:
             pic.set_paintable(tex)
             pic.set_size_request(MEDIA_W, max(120, min(360, round(MEDIA_W * h / max(w, 1)))))
@@ -633,13 +505,13 @@ class ThreadView(Adw.Bin):
             self.toast("Over about 1.5 MB — carriers often reject MMS that large")
 
     def sync_pending(self):
-        ui.clear(self.pending_box)
+        widgets.clear(self.pending_box)
         for path in self.pending:
             tile = Gtk.Overlay()
             tile.add_css_class("pending-tile")
             tile.set_overflow(Gtk.Overflow.HIDDEN)
             mime = mimetypes.guess_type(path)[0] or ""
-            if mime.startswith("image/") and (tex := texture_from_file(path, 160)[0]):
+            if mime.startswith("image/") and (tex := widgets.texture_from_file(path, 160)[0]):
                 pic = Gtk.Picture(paintable=tex, content_fit=Gtk.ContentFit.COVER)
                 pic.set_size_request(64, 64)
                 tile.set_child(pic)
@@ -686,13 +558,13 @@ class ThreadView(Adw.Bin):
             self.pending = item["paths"] + [p for p in self.pending if p not in item["paths"]]
             self.sync_pending()
             self.render()
-        self.toast(ui.friendly_error(message))
+        self.toast(kde.friendly_error(message))
 
     def sending_bubble(self, item):
         col = Gtk.Box(orientation=VERTICAL, spacing=4, halign=Gtk.Align.END)
         col.add_css_class("sending")
         for path in item["paths"]:
-            if tex := texture_from_file(path, 480)[0]:
+            if tex := widgets.texture_from_file(path, 480)[0]:
                 pic = Gtk.Picture(paintable=tex, content_fit=Gtk.ContentFit.COVER)
                 pic.set_size_request(MEDIA_W, MEDIA_W)
                 frame = Gtk.Overlay(child=pic, overflow=Gtk.Overflow.HIDDEN, halign=Gtk.Align.END)
@@ -830,7 +702,7 @@ class MessagesWindow(Adw.ApplicationWindow):
         return name, (pretty_number(a) if name != pretty_number(a) else ""), self.photo_for(a)
 
     def avatar_for(self, title, size, photo):
-        avatar = ui.avatar(title, size)
+        avatar = widgets.avatar(title, size)
         if not any(ch.isalpha() for ch in title):
             # A bare number or short code: its "initials" would be "(7" or "2".
             avatar.set_show_initials(False)
@@ -911,9 +783,9 @@ class MessagesWindow(Adw.ApplicationWindow):
             row = Gtk.ListBoxRow()
             row.tid, row.shown_title = tid, None
             row.avatar_slot = Gtk.Box()
-            row.title = ui.label("", "convo-name", hexpand=True, ellipsize=Pango.EllipsizeMode.END)
-            row.time = ui.label("", "convo-time")
-            row.preview = ui.label("", "convo-preview", hexpand=True,
+            row.title = widgets.label("", "convo-name", hexpand=True, ellipsize=Pango.EllipsizeMode.END)
+            row.time = widgets.label("", "convo-time")
+            row.preview = widgets.label("", "convo-preview", hexpand=True,
                                    ellipsize=Pango.EllipsizeMode.END, single_line_mode=True)
             row.dot = Gtk.Box(valign=Gtk.Align.CENTER, css_classes=["unread"])
             top = Gtk.Box(spacing=6)
@@ -932,7 +804,7 @@ class MessagesWindow(Adw.ApplicationWindow):
             self.rows.append(row)
             self.row_by_tid[tid] = row
         if row.shown_title != title:
-            ui.clear(row.avatar_slot)
+            widgets.clear(row.avatar_slot)
             row.avatar_slot.append(self.avatar_for(title, 40, photo))
             row.title.set_label(title)
             row.shown_title = title
@@ -960,12 +832,12 @@ class App(Adw.Application):
 
     def do_startup(self):
         Adw.Application.do_startup(self)
-        pal = ui.load_palette()
+        pal = theme.load_palette()
         Adw.StyleManager.get_default().set_color_scheme(
             Adw.ColorScheme.FORCE_LIGHT if pal.get("mode") == "light"
             else Adw.ColorScheme.FORCE_DARK)
         css = Gtk.CssProvider()
-        css.load_from_string(ui.build_css(pal) + extra_css(pal))
+        css.load_from_string(theme.build_css(pal) + extra_css(pal))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
