@@ -77,8 +77,16 @@ need() {
 reexec_tty() {
   [[ -t 1 ]] && return 0
   have omarchy-launch-or-focus-tui || return 0
+  # omarchy-launch-or-focus eventually runs `eval` on this command, so the
+  # script for the terminal is quoted to survive being read by a shell again:
+  # an argument holding a space or a quote must arrive whole, as one argument,
+  # rather than as more words to run. By path, not by name, so the terminal
+  # runs this copy of the script and not another one that PATH may find first.
+  local run script
+  printf -v run '%q ' "$SELF" "$@"
+  script="$run; printf '\n[any key to close]'; read -rsn1"
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
-    "bash -c 'phonelink $*; printf \"\\n[any key to close]\"; read -rsn1'"
+    "bash -c $(printf '%q' "$script")"
 }
 
 # Same idea as reexec_tty, but for the reply panel, whose height depends on how
