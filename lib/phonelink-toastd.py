@@ -214,11 +214,17 @@ window.phonelink-toast {{ background: transparent; }}
 
 def read_note(objpath):
     """A phone notification as the toast needs it, or None if it has gone."""
+    # A signal naming something that is not an object path at all: GLib refuses
+    # to make the call and hands back None rather than raising, so check first.
+    if not GLib.Variant.is_object_path(objpath):
+        return None
     try:
-        props = kn.call(objpath, kn.PROPS, "GetAll",
-                        GLib.Variant("(s)", (kn.NOTIF_IFACE,))).unpack()[0]
+        reply = kn.call(objpath, kn.PROPS, "GetAll", GLib.Variant("(s)", (kn.NOTIF_IFACE,)))
     except GLib.Error:
         return None
+    if reply is None:
+        return None
+    props = reply.unpack()[0]
     text, ticker = props.get("text", ""), props.get("ticker", "")
     return {
         "path": objpath, "app": props.get("appName", ""), "title": props.get("title", ""),
@@ -498,18 +504,22 @@ class Daemon:
     def start(self, arg):
         self.app.hold()
         if self.mode == "resident":
-            # Any sender, not just org.kde.kdeconnect: the notification itself is
-            # always read back from kdeconnectd, so a signal from elsewhere can at
-            # most re-show a real notification -- which is how `--show` and the
-            # tests drive this without waiting for a message to arrive.
-            kn.BUS.signal_subscribe(None, PLUGIN_IFACE, None, None, None,
+            # Only kdeconnectd's own signals. Everything they carry is read back
+            # from kdeconnectd anyway, so another program on the session bus could
+            # at most re-show a real notification -- but it could do that at will,
+            # and nothing else on the bus has business driving these toasts.
+            # PHONELINK_TOAST_ANY_SENDER=1 lifts the check, for tests that emit
+            # the signals themselves rather than waiting for a message to arrive.
+            loose = os.environ.get("PHONELINK_TOAST_ANY_SENDER", "") not in ("", "0")
+            sender = None if loose else kn.SERVICE
+            kn.BUS.signal_subscribe(sender, PLUGIN_IFACE, None, None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_signal)
             # Updates need a hook of their own. KDE Connect re-shows an existing
             # notification's popup on every non-silent update -- a second
             # message in the same chat -- but announces it on no plugin signal:
             # notificationUpdated is declared and never emitted. The object's
             # own `ready` fires on each (re)show, so that is the one to follow.
-            kn.BUS.signal_subscribe(None, kn.NOTIF_IFACE, "ready", None, None,
+            kn.BUS.signal_subscribe(sender, kn.NOTIF_IFACE, "ready", None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_ready)
             print("phonelink toasts: listening for phone notifications", flush=True)
         elif self.mode == "demo":
