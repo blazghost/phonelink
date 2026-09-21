@@ -19,9 +19,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           # python3-gi brings GLib and Gio; dbus-daemon backs dbus-run-session.
+          # GdkPixbuf is what the Photos tests decode their pictures with, and
+          # without its typelib they fail to import rather than skip.
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-glib-2.0 dbus shellcheck
+            python3-gi gir1.2-glib-2.0 gir1.2-gdkpixbuf-2.0 dbus shellcheck
           python3 -c "import gi; from gi.repository import Gio, GLib; print('gi ok')"
+          python3 -c "import gi; gi.require_version('GdkPixbuf', '2.0'); print('pixbuf ok')"
 
       - name: Lint
         run: |
