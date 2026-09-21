@@ -142,11 +142,12 @@ if [[ ! -d ${HOME}/.config/omarchy/plugins ]]; then
 elif ! have omarchy-shell; then
   skip "the Omarchy shell is not installed — skipped"
 else
-  fresh=1
+  fresh=1 changed=0
   [[ -d $PLUGIN_DIR ]] && fresh=0
   mkdir -p "$PLUGIN_DIR"
   if (( fresh )) || ! diff -rq "$PLUGIN_SRC" "$PLUGIN_DIR" >/dev/null 2>&1; then
     cp "$PLUGIN_SRC"/* "$PLUGIN_DIR/"
+    changed=1
     note "battery, signal and waiting messages; click for Messages"
   else
     skip "already current"
@@ -161,9 +162,14 @@ else
         >/dev/null 2>&1 || omarchy plugin enable phonelink.phone >/dev/null 2>&1 || true
       note "added to the bar (omarchy plugin disable phonelink.phone removes it)"
     fi
-    # A plugin the shell has never seen appears only after it restarts; an
-    # update to one it already knows is picked up by the rescan above.
+  fi
+  # A plugin the shell has never seen appears only after a restart, and a
+  # reload of one it knows can leave the previous copy running -- which is how
+  # an updated widget was seen still calling the command it used to have. So
+  # restart whenever the files changed, and never when they did not.
+  if (( changed )); then
     omarchy restart shell >/dev/null 2>&1 || true
+    note "restarted the Omarchy shell so it picks the widget up"
   fi
 fi
 

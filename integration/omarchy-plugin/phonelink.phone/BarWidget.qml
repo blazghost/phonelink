@@ -63,6 +63,13 @@ BarWidget {
     return parts.join(" · ")
   }
 
+  // The bar API a plugin is handed has `run` but no shell quoting of its own,
+  // so do it here: a phonelink kept somewhere with a space in the path would
+  // otherwise arrive as two words.
+  function quoted(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+  }
+
   function consume(line) {
     var text = String(line || "").trim()
     if (text === "") return
@@ -213,11 +220,11 @@ BarWidget {
     onClicked: function(mouse) {
       if (!root.bar) return
       if (mouse.button === Qt.RightButton) {
-        root.bar.run(root.bar.shellQuote(root.program) + " reply")
+        root.bar.run(root.quoted(root.program) + " reply")
       } else if (mouse.button === Qt.MiddleButton) {
-        root.bar.run(root.bar.shellQuote(root.program) + " kde restart")
+        root.bar.run(root.quoted(root.program) + " kde restart")
       } else {
-        root.bar.run(root.bar.shellQuote(root.program) + " messages")
+        root.bar.run(root.quoted(root.program) + " messages")
       }
       poll.running = true
     }
