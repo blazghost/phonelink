@@ -38,13 +38,20 @@ fi
 
 if [[ $want == all || $want == dbus ]]; then
   if command -v dbus-run-session >/dev/null; then
-    # A private bus, and an empty XDG_DATA_DIRS with it: on the session bus the
-    # fake would fight the real daemon, and without this, asking for
+    # A private bus, started with an empty XDG_DATA_DIRS: on the session bus
+    # the fake would fight the real daemon, and without this, asking for
     # org.kde.kdeconnect would simply start the real one instead.
+    #
+    # The bus reads that variable when it starts, so emptying it for
+    # dbus-run-session alone is enough -- and the tests themselves get the real
+    # one back, because GdkPixbuf finds its image loaders through it and the
+    # photo tests decode real pictures.
     empty=$(mktemp -d)
     trap 'rm -rf "$empty"' EXIT
-    run "D-Bus tests" env XDG_DATA_DIRS="$empty" PHONELINK_TEST_BUS=1 PYTHONPATH=lib \
-      dbus-run-session -- python3 -m unittest discover -s tests -p 'test_dbus_*.py' -v
+    run "D-Bus tests" env XDG_DATA_DIRS="$empty" \
+      dbus-run-session -- env XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
+      PHONELINK_TEST_BUS=1 PYTHONPATH=lib \
+      python3 -m unittest discover -s tests -p 'test_dbus_*.py' -v
   else
     printf '\n== D-Bus tests: dbus-run-session not installed, skipped\n'
   fi

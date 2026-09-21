@@ -17,6 +17,7 @@ daemon call -- which is how the real kdeconnectd has failed: still on the bus,
 serving nothing.
 """
 
+import os
 import sys
 
 import gi
@@ -31,6 +32,14 @@ NOTIF_IFACE = "org.kde.kdeconnect.device.notifications.notification"
 
 DAEMON_PATH = "/modules/kdeconnect"
 DAEMON_IFACE = "org.kde.kdeconnect.daemon"
+SFTP_IFACE = "org.kde.kdeconnect.device.sftp"
+
+# Where the fake phone's storage is. A test points this at a directory it has
+# filled with a camera roll, so the scan runs over a real filesystem and only
+# the phone is pretend. PHONELINK_FAKE_MOUNT_FAILS makes the mount refuse,
+# which is the other half of what the window has to handle.
+FAKE_MOUNT = os.environ.get("PHONELINK_FAKE_MOUNT", "")
+MOUNT_FAILS = os.environ.get("PHONELINK_FAKE_MOUNT_FAILS", "") not in ("", "0")
 
 DESKTOP = "aaaa0000aaaa0000aaaa0000aaaa0000"
 PHONE = "bbbb1111bbbb1111bbbb1111bbbb1111"
@@ -98,16 +107,61 @@ NOTIF_XML = f"""
 </node>
 """
 
+SFTP_XML = f"""
+<node>
+  <interface name="{SFTP_IFACE}">
+    <method name="mount"/>
+    <method name="unmount"/>
+    <method name="mountAndWait"><arg type="b" direction="out"/></method>
+    <method name="isMounted"><arg type="b" direction="out"/></method>
+    <method name="mountPoint"><arg type="s" direction="out"/></method>
+    <method name="getMountError"><arg type="s" direction="out"/></method>
+    <method name="getDirectories"><arg type="a{{sv}}" direction="out"/></method>
+  </interface>
+</node>
+"""
+
 # Replies land here, and `sent` prints them, so a test can check what was said
 # without a phone anywhere.
 SENT = []
+
+# Whether the fake phone's storage is "mounted" right now.
+MOUNTED = [False]
+
+
+def sftp_reply(name):
+    """What the sftp plugin answers, which differs per method and per state."""
+    if name == "mountAndWait":
+        MOUNTED[0] = not MOUNT_FAILS
+        return GLib.Variant("(b)", (MOUNTED[0],))
+    if name == "isMounted":
+        return GLib.Variant("(b)", (MOUNTED[0],))
+    if name == "mountPoint":
+        return GLib.Variant("(s)", (FAKE_MOUNT if MOUNTED[0] else "",))
+    if name == "getMountError":
+        return GLib.Variant("(s)", ("the phone refused the connection" if MOUNT_FAILS else "",))
+    if name == "getDirectories":
+        # The real plugin exports a folder inside the mount, not the mount
+        # itself, and phonelink has to look in the exported one.
+        inside = f"{FAKE_MOUNT}/storage/emulated/0"
+        return GLib.Variant("(a{sv})", ({inside: GLib.Variant("s", "Internal storage")},)
+                            if MOUNTED[0] else ({},))
+    if name == "unmount":
+        MOUNTED[0] = False
+    return None
 
 
 def variant(value):
     return GLib.Variant("b", value) if isinstance(value, bool) else GLib.Variant("s", value)
 
 
-def register(bus, path, xml, props, on_call=None, reply=None, hang=False):
+def register(bus, path, xml, props, on_call=None, reply=None, hang=False, answer=None):
+    """Put one object on the bus.
+
+    `reply` is the same answer for every method; `answer` is a function of the
+    method name, for an interface like sftp whose methods each say something
+    different.
+    """
     info = Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0]
 
     def method(_c, _sender, _path, _iface, name, params, invocation):
@@ -115,7 +169,7 @@ def register(bus, path, xml, props, on_call=None, reply=None, hang=False):
             on_call(name, params)
         if hang:
             return  # the caller waits until its own timeout, as with a wedged daemon
-        invocation.return_value(reply)
+        invocation.return_value(answer(name) if answer else reply)
 
     def get_prop(_c, _sender, _path, _iface, name):
         return variant(props[name]) if name in props else None
@@ -146,6 +200,9 @@ def main(hang=False):
 
     for device, props in DEVICES_DATA.items():
         register(bus, f"{DEVICES}/{device}", DEVICE_XML, props)
+
+    # The phone's storage, as the sftp plugin offers it.
+    register(bus, f"{DEVICES}/{PHONE}/sftp", SFTP_XML, {}, answer=sftp_reply, hang=hang)
 
     for nid, props in NOTES.items():
         path = f"{DEVICES}/{PHONE}/notifications/{nid}"
