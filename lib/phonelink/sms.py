@@ -71,9 +71,8 @@ def pretty_number(number):
     return number or "Unknown"
 
 
-def load_contacts(device_id):
-    """{number key: (name, photo bytes)} from the vCards KDE Connect syncs."""
-    book = {}
+def cards(device_id):
+    """(name, [numbers], photo bytes) per vCard KDE Connect has synced."""
     folder = Path(GLib.get_user_data_dir()) / "kpeoplevcard" / f"kdeconnect-{device_id}"
     for card in sorted(folder.glob("*.vcf")) if folder.is_dir() else []:
         try:
@@ -94,10 +93,109 @@ def load_contacts(device_id):
                     photo = base64.b64decode(data)
                 except ValueError:
                     photo = None
+        yield name, tels, photo
+
+
+def load_contacts(device_id):
+    """{number key: (name, photo bytes)} from the vCards KDE Connect syncs."""
+    book = {}
+    for name, tels, photo in cards(device_id):
         for tel in tels:
             if k := number_key(tel):
                 book.setdefault(k, (name, photo))
     return book
+
+
+def load_people(device_id):
+    """[{name, number, key, photo}], one per number, for starting a new text.
+
+    The book read by number answers "who is this?"; starting a text asks the
+    other way round, and a contact with a mobile and a landline is two entries
+    there, because you have to pick one to send to.
+    """
+    people, seen = [], set()
+    for name, tels, photo in cards(device_id):
+        for tel in tels:
+            key = number_key(tel)
+            if not key or (name, key) in seen:
+                continue
+            seen.add((name, key))
+            people.append({"name": name or pretty_number(tel), "number": tel.strip(),
+                           "key": key, "photo": photo})
+    people.sort(key=lambda p: (p["name"].lower(), p["key"]))
+    return people
+
+
+def looks_like_number(text):
+    """Is this a number to text, rather than somebody's name?
+
+    Written as people write them: +1 (555) 010-1234, 555-0134, 5550134. Short
+    codes are four digits and up, which is where the lower bound comes from.
+    """
+    stripped = re.sub(r"[\s().\-]", "", text or "")
+    return bool(re.fullmatch(r"\+?\d{4,15}", stripped))
+
+
+def clean_number(text):
+    """What to hand the phone: digits, and a leading + if it was written."""
+    digits = re.sub(r"\D", "", text or "")
+    return ("+" if (text or "").strip().startswith("+") else "") + digits
+
+
+def match_people(people, query):
+    """Contacts worth offering for what has been typed, best first.
+
+    A name typed in full wins outright, so "Jim" cannot be beaten by "Jimmy"
+    while both exist; otherwise the ones starting with it, then the ones
+    containing it, then numbers that contain the digits typed.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return list(people)
+    digits = re.sub(r"\D", "", q)
+    exact, starts, holds, numbers = [], [], [], []
+    for person in people:
+        name = person["name"].lower()
+        if name == q:
+            exact.append(person)
+        elif name.startswith(q):
+            starts.append(person)
+        elif q in name:
+            holds.append(person)
+        elif digits and digits in re.sub(r"\D", "", person["number"]):
+            numbers.append(person)
+    return exact + starts + holds + numbers
+
+
+def resolve_recipient(text, people):
+    """(address, who it is, error) for what was typed in a To field.
+
+    A number is taken as written -- a contact may simply not be synced -- and
+    named when the book knows it. A name has to come out to exactly one
+    person, because sending a text to the wrong Chris is not recoverable.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, "", "Who should this go to?"
+    if looks_like_number(text):
+        number = clean_number(text)
+        known = next((p for p in people if p["key"] == number_key(number)), None)
+        return number, (known["name"] if known else pretty_number(number)), None
+    hits = match_people(people, text)
+    if not hits:
+        if not people:
+            return None, "", ("No contacts are synced, so names can't be looked up — "
+                              "type a number, or allow Contacts for KDE Connect on the phone")
+        return None, "", f"No contact matching “{text}”"
+    names = list(dict.fromkeys(p["name"] for p in hits))
+    if len(names) > 1 and names[0].lower() != text.lower():
+        return None, "", "Did you mean " + ", ".join(names[:4]) + "?"
+    first = hits[0]
+    same = [p for p in hits if p["name"] == first["name"]]
+    if len(same) > 1:
+        numbers = ", ".join(pretty_number(p["number"]) for p in same[:4])
+        return None, "", f"{first['name']} has several numbers: {numbers}"
+    return first["number"], first["name"], None
 
 
 def when(ms):

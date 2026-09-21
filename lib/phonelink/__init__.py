@@ -10,6 +10,7 @@ a D-Bus call. They import this package instead:
     kdeconnect  talking to kdeconnectd: devices, notifications, replies
     helper      the same, as a subprocess, so a window can be driven by a stub
     sms         phone numbers, contacts, dates and the SMS/MMS message
+    mpris       what the phone is playing, and the buttons for it
 
 Each entry script puts `lib/` on sys.path and imports from here; nothing in the
 package imports an entry script back.

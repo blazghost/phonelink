@@ -55,7 +55,9 @@ plain bash and works on any Linux with the four tools installed.
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
+phonelink text [who] [msg]  start a text to anyone: a name or a number
 phonelink photos            the phone's camera roll as a grid
+phonelink media [command]   what the phone is playing, and the buttons for it
 phonelink status            what is connected right now, and what is missing
 phonelink mirror            mirror and control the phone screen
 phonelink desk [package]    run one app on its own virtual display
@@ -90,6 +92,31 @@ conversation. Carriers often refuse MMS much over 1.5 MB, so it warns you.
 Names and contact photos come from the contacts KDE Connect syncs from the
 phone. If threads show numbers instead, enable the Contacts plugin, and allow
 its permission, in the KDE Connect app on the phone.
+
+### A text to somebody you have no thread with
+
+The pencil in the conversation list — or `phonelink text` — opens a **New
+message**: a To field, whoever you could be writing to under it, and the same
+box and paperclip as any other thread. From a shell it can go in one line, so
+it fits on a keybind:
+
+```
+phonelink text 5550134 "on my way"
+phonelink text "Naomi Nagata" "docking in ten"
+phonelink text --attach ~/Pictures/dock.jpg 5550134 "look at this"
+phonelink text --list                 who it can text by name
+phonelink text                        the window, on a blank text
+phonelink text 5550134                the same, with the number filled in
+```
+
+A number is taken as written. A name has to come out to exactly one contact,
+and anything else — two people matching, one person with two numbers — comes
+back as a question rather than a guess, because a text cannot be unsent. Names
+need the contacts KDE Connect syncs; without that permission, numbers still
+work and the window says so.
+
+The phone decides which conversation the message belongs to, so the window
+opens that thread as soon as the phone reports it back.
 
 **Signal, Messenger, WhatsApp.** KDE Connect can read the phone's texting
 database, but not other apps' messages. A Signal or Messenger notification
@@ -251,6 +278,35 @@ $ phonelink bar --pretty
 }
 ```
 
+## Media: what the phone is playing
+
+A second widget, beside the first: the track playing on the phone, with the
+buttons for it. Click to play or pause, right-click for the next track,
+middle-click for the previous one, and the wheel is the phone's volume.
+Hovering names the track, the artist, the album and the player. While nothing
+is playing it takes no room in the bar at all.
+
+```bash
+omarchy bar set phonelink.media hideWhenIdle false   # keep a glyph either way
+omarchy bar set phonelink.media showTitle false      # the glyph alone
+omarchy plugin disable phonelink.media               # take it off the bar
+```
+
+The audio stays on the phone — KDE Connect's mprisremote plugin carries the
+controls, not the sound. The same thing from a shell, where it also fits a
+keybind:
+
+```
+phonelink media                 what is playing, in a few lines
+phonelink media toggle          play or pause, whichever it isn't
+phonelink media next|previous|play|pause|stop
+phonelink media volume +10      the phone's volume, by steps or outright
+phonelink media seek +30        jump about within the track
+phonelink media players         which players the phone is offering
+phonelink media --player Podcasts pause     one of them by name
+phonelink media --json          one line of JSON, as the widget reads it
+```
+
 ## Notification toasts
 
 `phonelink toasts on` (which `install.sh` runs) replaces the plain popup KDE
@@ -367,6 +423,8 @@ lib/phonelink-toastd.py     the notification toasts (a systemd user service)
 lib/phonelink-messages.py   the Messages window
 lib/phonelink-photos.py     the Photos window: the camera roll as a grid
 lib/phonelink-bar.py        what the phone is doing, as JSON, for the bar widget
+lib/phonelink-media.py      what the phone is playing, and the buttons for it
+lib/phonelink-text.py       a text to somebody there is no thread with yet
 lib/kdeconnect-notify.py    list and answer notifications from a shell
 lib/phonelink/              what those share:
     theme.py                the Omarchy palette and the CSS built from it
@@ -375,8 +433,9 @@ lib/phonelink/              what those share:
     kdeconnect.py           devices, notifications and replies over D-Bus
     helper.py               the same as a subprocess, so a window can be stubbed
     sms.py                  numbers, contacts, dates, the SMS/MMS message
+    mpris.py                the phone's player: what it is playing, and the buttons
     photos.py               the sftp mount, the camera roll, thumbnails and their cache
-integration/omarchy-plugin/ the bar widget, as an Omarchy shell plugin
+integration/omarchy-plugin/ the two bar widgets, as Omarchy shell plugins
 tests/                      the checks below
 ```
 

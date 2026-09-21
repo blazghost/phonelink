@@ -132,46 +132,60 @@ block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-messages.lua.snipp
 block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-photos.lua.snippet" \
   "Photos window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.photos)$"'
 
-step "Phone widget for the bar"
+step "Bar widgets"
 # A plugin directory of its own under ~/.config/omarchy/plugins, the way every
 # third-party Omarchy widget is installed. Copied rather than symlinked: the
 # shell watches the directory, and a symlink to a checkout is not what it
 # expects to find there.
-PLUGIN_SRC="$SRC_DIR/integration/omarchy-plugin/phonelink.phone"
-PLUGIN_DIR="${HOME}/.config/omarchy/plugins/phonelink.phone"
+shell_changed=0
+
+# install_plugin <id> <what it does> [omarchy plugin enable args...]
+install_plugin() {
+  local id=$1 what=$2
+  shift 2
+  local src="$SRC_DIR/integration/omarchy-plugin/$id"
+  local dir="${HOME}/.config/omarchy/plugins/$id"
+  local fresh=1
+  [[ -d $dir ]] && fresh=0
+  mkdir -p "$dir"
+  if (( fresh )) || ! diff -rq "$src" "$dir" >/dev/null 2>&1; then
+    cp "$src"/* "$dir/"
+    shell_changed=1
+    note "$what"
+  else
+    skip "$id already current"
+  fi
+  omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
+  if (( fresh )) && have omarchy; then
+    # Put it with the other status widgets, once. Moving or removing it
+    # afterwards is `omarchy bar move` / `omarchy plugin disable`, and this
+    # never second-guesses that.
+    omarchy plugin enable "$id" "$@" >/dev/null 2>&1 \
+      || omarchy plugin enable "$id" >/dev/null 2>&1 || true
+    note "added to the bar (omarchy plugin disable $id removes it)"
+  fi
+}
+
 if [[ ! -d ${HOME}/.config/omarchy/plugins ]]; then
   skip "no ~/.config/omarchy/plugins — skipped"
 elif ! have omarchy-shell; then
   skip "the Omarchy shell is not installed — skipped"
 else
-  fresh=1 changed=0
-  [[ -d $PLUGIN_DIR ]] && fresh=0
-  mkdir -p "$PLUGIN_DIR"
-  if (( fresh )) || ! diff -rq "$PLUGIN_SRC" "$PLUGIN_DIR" >/dev/null 2>&1; then
-    cp "$PLUGIN_SRC"/* "$PLUGIN_DIR/"
-    changed=1
-    note "battery, signal and waiting messages; click for Messages"
-  else
-    skip "already current"
-  fi
-  omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
-  if (( fresh )); then
-    # Put it next to the other status widgets, once. Moving or removing it
-    # afterwards is `omarchy bar move` / `omarchy plugin disable`, and this
-    # never second-guesses that.
-    if have omarchy; then
-      omarchy plugin enable phonelink.phone --section right --before omarchy.bluetooth \
-        >/dev/null 2>&1 || omarchy plugin enable phonelink.phone >/dev/null 2>&1 || true
-      note "added to the bar (omarchy plugin disable phonelink.phone removes it)"
-    fi
-  fi
+  install_plugin phonelink.phone \
+    "Phone: battery, signal and waiting messages; click for Messages" \
+    --section right --before omarchy.bluetooth
+  # Left of the phone, so the track reads before the status glyphs. It takes
+  # no room at all while nothing is playing.
+  install_plugin phonelink.media \
+    "Phone media: the track playing on the phone; click to play or pause" \
+    --section right --before phonelink.phone
   # A plugin the shell has never seen appears only after a restart, and a
   # reload of one it knows can leave the previous copy running -- which is how
   # an updated widget was seen still calling the command it used to have. So
   # restart whenever the files changed, and never when they did not.
-  if (( changed )); then
+  if (( shell_changed )); then
     omarchy restart shell >/dev/null 2>&1 || true
-    note "restarted the Omarchy shell so it picks the widget up"
+    note "restarted the Omarchy shell so it picks the widgets up"
   fi
 fi
 

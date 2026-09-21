@@ -310,6 +310,19 @@ def send_reply(path, text):
     call(path, NOTIF_IFACE, "sendReply", GLib.Variant("(s)", (text,)))
 
 
+def send_new_message(device_id, addresses, text, attachments=()):
+    """Text somebody there is no conversation with yet.
+
+    KDE Connect's own SMS window calls this the same way: a list of addresses
+    (several make it a group MMS), the message, and file paths for anything
+    attached -- read with QFile on the way out, so plain paths, not URLs. The
+    phone decides the thread; nothing here has an id to send to yet.
+    """
+    call(f"{DEVICES}/{device_id}", CONV_IFACE, "sendWithoutConversation",
+         GLib.Variant("(avsav)", ([GLib.Variant("(s)", (a,)) for a in addresses], text,
+                                  [GLib.Variant("s", str(p)) for p in attachments])))
+
+
 def dismiss(path):
     """Clear a notification on the phone, the way swiping it away does.
 
