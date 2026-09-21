@@ -16,6 +16,7 @@ HYPR_DIR="${HOME}/.config/hypr"
 MENU_FILE="${HOME}/.config/omarchy/extensions/omarchy-menu.jsonc"
 TS="$(date +%s)"
 
+have() { command -v "$1" >/dev/null 2>&1; }
 step() { printf '\n\033[36m==>\033[0m %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 skip() { printf '    \033[2m%s\033[0m\n' "$*"; }
@@ -128,6 +129,43 @@ block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-panel.lua.snippet"
   "phonelink reply panel (float)" 'o.window("^(org\\.omarchy\\.phonelink)$"'
 block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-messages.lua.snippet" \
   "Messages window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.messages)$"'
+
+step "Phone widget for the bar"
+# A plugin directory of its own under ~/.config/omarchy/plugins, the way every
+# third-party Omarchy widget is installed. Copied rather than symlinked: the
+# shell watches the directory, and a symlink to a checkout is not what it
+# expects to find there.
+PLUGIN_SRC="$SRC_DIR/integration/omarchy-plugin/phonelink.phone"
+PLUGIN_DIR="${HOME}/.config/omarchy/plugins/phonelink.phone"
+if [[ ! -d ${HOME}/.config/omarchy/plugins ]]; then
+  skip "no ~/.config/omarchy/plugins — skipped"
+elif ! have omarchy-shell; then
+  skip "the Omarchy shell is not installed — skipped"
+else
+  fresh=1
+  [[ -d $PLUGIN_DIR ]] && fresh=0
+  mkdir -p "$PLUGIN_DIR"
+  if (( fresh )) || ! diff -rq "$PLUGIN_SRC" "$PLUGIN_DIR" >/dev/null 2>&1; then
+    cp "$PLUGIN_SRC"/* "$PLUGIN_DIR/"
+    note "battery, signal and waiting messages; click for Messages"
+  else
+    skip "already current"
+  fi
+  omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
+  if (( fresh )); then
+    # Put it next to the other status widgets, once. Moving or removing it
+    # afterwards is `omarchy bar move` / `omarchy plugin disable`, and this
+    # never second-guesses that.
+    if have omarchy; then
+      omarchy plugin enable phonelink.phone --section right --before omarchy.bluetooth \
+        >/dev/null 2>&1 || omarchy plugin enable phonelink.phone >/dev/null 2>&1 || true
+      note "added to the bar (omarchy plugin disable phonelink.phone removes it)"
+    fi
+    # A plugin the shell has never seen appears only after it restarts; an
+    # update to one it already knows is picked up by the rescan above.
+    omarchy restart shell >/dev/null 2>&1 || true
+  fi
+fi
 
 step "Phone notification toasts"
 # Delegated to `phonelink toasts on`, which is also how you turn them back on

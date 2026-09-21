@@ -45,17 +45,18 @@ NOTES = {
     "1": {"appName": "Reddit", "title": "Reddit", "text": "Someone replied",
           "ticker": "Reddit: Someone replied", "replyId": "", "silent": False,
           "internalId": "0|com.reddit.frontpage|1||10123", "isConversation": False,
-          "hasIcon": False, "iconPath": ""},
+          "hasIcon": False, "iconPath": "", "dismissable": False},
     "2": {"appName": "Messenger", "title": "Naomi Nagata",
           "text": "<b>Naomi Nagata</b><br/>Docking in ten&nbsp;minutes<br/>"
                   "<b>Alex Kamal</b><br/>Copy that",
           "ticker": "Naomi Nagata: Docking in ten minutes", "replyId": "reply-2",
           "silent": False, "internalId": "0|com.facebook.orca|2|tag|10222",
-          "isConversation": True, "hasIcon": False, "iconPath": ""},
+          "isConversation": True, "hasIcon": False, "iconPath": "",
+          "dismissable": True},
     "3": {"appName": "Messages", "title": "(555) 010-1234", "text": "On my way",
           "ticker": "(555) 010-1234: On my way", "replyId": "reply-3", "silent": True,
           "internalId": "0|com.android.messaging|3||10333", "isConversation": True,
-          "hasIcon": False, "iconPath": ""},
+          "hasIcon": False, "iconPath": "", "dismissable": True},
 }
 
 DAEMON_XML = f"""
@@ -90,6 +91,7 @@ NOTIF_XML = f"""
     <property name="silent" type="b" access="read"/>
     <property name="internalId" type="s" access="read"/>
     <property name="isConversation" type="b" access="read"/>
+    <property name="dismissable" type="b" access="read"/>
     <property name="hasIcon" type="b" access="read"/>
     <property name="iconPath" type="s" access="read"/>
   </interface>
@@ -152,6 +154,9 @@ def main(hang=False):
             if name == "sendReply":
                 SENT.append((path, params.unpack()[0]))
                 print(f"reply {path} {params.unpack()[0]}", flush=True)
+            elif name == "dismiss":
+                SENT.append((path, "dismiss"))
+                print(f"dismiss {path}", flush=True)
 
         register(bus, path, NOTIF_XML, props, sent)
 

@@ -42,6 +42,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from phonelink import apps, kdeconnect as kde, theme, widgets  # noqa: E402
+from phonelink import helper  # noqa: E402
 from phonelink.helper import HELPER  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.toasts"
@@ -326,7 +327,8 @@ class Toast:
         hover.connect("leave", lambda *_: setattr(self, "hovered", False))
         self.frame.add_controller(hover)
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
-        keys.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
+        keys.connect("key-pressed",
+                     lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close(True) or True))
         win.add_controller(keys)
 
         self.build()
@@ -369,7 +371,7 @@ class Toast:
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)
         close.add_css_class("close")
-        close.connect("clicked", lambda *_: self.close())
+        close.connect("clicked", lambda *_: self.close(True))
         header.append(close)
         self.content.append(header)
 
@@ -461,12 +463,21 @@ class Toast:
             # here -- so for those a left-click just dismisses, like a right.
             self.daemon.open_full(self.note)
         if button in (Gdk.BUTTON_PRIMARY, Gdk.BUTTON_SECONDARY):
-            self.close()
+            self.close(True)
 
-    def close(self):
+    def close(self, clear_on_phone=False):
+        """Take the toast away. `clear_on_phone` when you dealt with it here.
+
+        A toast that simply ran out of time leaves the phone alone -- you may
+        never have looked at it. Answering it, or waving it away, is you
+        having dealt with it, and then the phone should not still be holding
+        it for you. PHONELINK_KEEP_ON_PHONE=1 turns that off.
+        """
         if self.closed:
             return
         self.closed = True
+        if clear_on_phone and not helper.keep_on_phone() and not self.note.get("sticky"):
+            helper.dismiss(self.note["path"])
         self.win.destroy()
         self.daemon.forget(self)
 
@@ -505,7 +516,7 @@ class Toast:
         self.content.append(widgets.label("✓ Sent", "sent", margin_start=self.daemon.look.icon
                                      + self.daemon.look.pad_h))
         self.daemon.restack()
-        GLib.timeout_add(1200, lambda: self.close() or False)
+        GLib.timeout_add(1200, lambda: self.close(True) or False)
 
 
 # --------------------------------------------------------------------- daemon

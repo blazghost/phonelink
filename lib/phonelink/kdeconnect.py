@@ -25,6 +25,8 @@ DAEMON_IFACE = "org.kde.kdeconnect.daemon"
 DEVICES = "/modules/kdeconnect/devices"
 DEVICE_IFACE = "org.kde.kdeconnect.device"
 NOTIF_PLUGIN_IFACE = "org.kde.kdeconnect.device.notifications"
+BATTERY_IFACE = "org.kde.kdeconnect.device.battery"
+CONNECTIVITY_IFACE = "org.kde.kdeconnect.device.connectivity_report"
 NOTIF_IFACE = "org.kde.kdeconnect.device.notifications.notification"
 CONV_IFACE = "org.kde.kdeconnect.device.conversations"
 PROPS = "org.freedesktop.DBus.Properties"
@@ -160,6 +162,43 @@ def phone(want=None):
     return pick_device(devices(), want)
 
 
+def health_now(timeout=2000):
+    """OK, HUNG or GONE, waited for -- for a command that is about to exit."""
+    if not running():
+        return GONE
+    try:
+        call(DAEMON_PATH, DAEMON_IFACE, "selfId", None, timeout)
+        return OK
+    except GLib.Error:
+        return HUNG if running() else GONE
+
+
+# ------------------------------------------------------- what the phone is up to
+
+def battery(device_id):
+    """{charge, charging} for the phone, or None if it does not report one."""
+    props = properties(f"{DEVICES}/{device_id}/battery", BATTERY_IFACE)
+    if not props or not props.get("hasBattery", True):
+        return None
+    return {"charge": props.get("charge", -1), "charging": bool(props.get("isCharging"))}
+
+
+def signal_strength(device_id):
+    """{bars, network} for the cellular connection, or None.
+
+    The phone reports bars 0-4 and a network name like LTE. Both need the
+    Android app's phone-state permission; without it the strength comes back
+    as -1, which is "unknown", not "no signal".
+    """
+    props = properties(f"{DEVICES}/{device_id}/connectivity_report", CONNECTIVITY_IFACE)
+    if not props:
+        return None
+    bars = props.get("cellularNetworkStrength", -1)
+    if not isinstance(bars, int) or bars < 0:
+        return None
+    return {"bars": bars, "network": props.get("cellularNetworkType", "")}
+
+
 # ---------------------------------------------------------- notification text
 
 def strip_markup(text):
@@ -269,6 +308,24 @@ def notifications(repliable_only=False):
 def send_reply(path, text):
     """Reply to a notification. Raises GLib.Error if it has gone from the phone."""
     call(path, NOTIF_IFACE, "sendReply", GLib.Variant("(s)", (text,)))
+
+
+def dismiss(path):
+    """Clear a notification on the phone, the way swiping it away does.
+
+    Answering a message on the desktop and then finding it still unread on the
+    phone is the thing Phone Link does not do. Not every notification allows
+    it -- an ongoing call or a media player says so with `dismissable` -- and
+    those are left alone.
+    """
+    props = properties(path, NOTIF_IFACE)
+    if not props or not props.get("dismissable", True):
+        return False
+    try:
+        call(path, NOTIF_IFACE, "dismiss")
+        return True
+    except GLib.Error:
+        return False  # already gone from the phone, which is the wanted end anyway
 
 
 def friendly_error(message):

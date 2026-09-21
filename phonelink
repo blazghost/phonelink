@@ -55,7 +55,10 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Launched from the Omarchy menu there is no terminal, so anything written to
 # stderr is simply lost. Mirror it to the notification bar instead.
 gui() { [[ ! -t 2 ]] && have notify-send; }
-note() { gui && notify-send -a phonelink "$1" "$2"; return 0; }
+# PHONELINK_QUIET silences the desktop notifications, for something that runs
+# on a timer: a bar widget polling every few seconds must not raise a popup per
+# failure, least of all while the phone is away.
+note() { [[ -z ${PHONELINK_QUIET-} ]] && gui && notify-send -a phonelink "$1" "$2"; return 0; }
 
 die()  { printf '%serror:%s %s\n' "$c_red" "$c_off" "$*" >&2; note "phonelink failed" "$*"; exit 1; }
 info() { printf '%s::%s %s\n' "$c_cya" "$c_off" "$*" >&2; }
@@ -609,6 +612,7 @@ phonelink — Android on your Linux desktop
   reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
   messages          the phone's texts, with MMS photos and video, Phone Link-style
+  bar               what the phone is doing, as JSON (the Omarchy bar widget reads this)
   toasts on|off     Phone Link-style popups for phone notifications, with a
                     reply box right in the popup (runs as a systemd user service)
   toasts status     whether they are running, and Do Not Disturb
@@ -747,6 +751,7 @@ main() {
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
+    bar)           shift; cmd_bar "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
     sms)           shift; cmd_sms "$@" ;;
@@ -759,6 +764,14 @@ main() {
 
 # The phone's SMS/MMS conversations with their photos and video, in a GTK window
 # (lib/phonelink-messages.py) over KDE Connect's conversations interface.
+# What the Omarchy bar widget reads. Plain JSON on stdout, nothing else, so
+# the widget can parse a line and get on with drawing.
+cmd_bar() {
+  export PHONELINK_QUIET=1
+  need python3
+  exec python3 "$SRC_DIR/lib/phonelink-bar.py" "$@"
+}
+
 cmd_messages() {
   gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
     || die "the Messages window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
