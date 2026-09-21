@@ -24,6 +24,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from phonelink.apps import open_in_app, open_label  # noqa: E402
+from phonelink import helper  # noqa: E402
 from phonelink.helper import HELPER, fetch_conversations  # noqa: E402
 from phonelink.kdeconnect import friendly_error, plain  # noqa: E402
 from phonelink.theme import build_css, load_palette  # noqa: E402
@@ -212,6 +213,10 @@ class ConversationView(Adw.Bin):
             self.failed(err)
             return
         self.entry.set_text("")
+        # Answered here, so the phone should not still be holding it for you.
+        # PHONELINK_KEEP_ON_PHONE=1 leaves the phone's own copy alone.
+        if not helper.keep_on_phone():
+            helper.dismiss(self.conv["path"])
         self.win.sent.setdefault(self.conv["path"], []).append(text)
         self.add_outgoing(text)
         if not self.win.on_replied(self.conv, text):

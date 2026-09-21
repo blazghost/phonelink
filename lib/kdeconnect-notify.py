@@ -7,6 +7,7 @@ conversations, no phone attached.
 
     kdeconnect-notify.py list                  -> JSON array, newest first
     kdeconnect-notify.py send <objpath> <text>
+    kdeconnect-notify.py dismiss <objpath>     clear it on the phone too
 
 Everything it does lives in phonelink.kdeconnect; this is argument handling and
 the two exit codes.
@@ -22,7 +23,9 @@ from gi.repository import GLib  # noqa: E402
 
 from phonelink import kdeconnect as kde  # noqa: E402
 
-USAGE = "usage: kdeconnect-notify.py list | kdeconnect-notify.py send <objpath> <text>"
+USAGE = ("usage: kdeconnect-notify.py list"
+         " | kdeconnect-notify.py send <objpath> <text>"
+         " | kdeconnect-notify.py dismiss <objpath>")
 
 # What `list` has always printed: only the notifications you can answer, and
 # without the two fields that are the toast service's business alone.
@@ -51,6 +54,12 @@ def main(argv):
             # The usual cause is the notification being dismissed on the phone
             # while you were typing; the object disappears with it.
             sys.exit(f"reply failed: {exc.message}")
+        return 0
+
+    if len(argv) == 3 and argv[1] == "dismiss":
+        # Not an error when it fails: the notification being gone from the
+        # phone already is the outcome this asks for.
+        print("dismissed" if kde.dismiss(argv[2]) else "already gone")
         return 0
 
     sys.exit(USAGE)

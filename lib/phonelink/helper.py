@@ -33,3 +33,26 @@ def fetch_conversations():
 def send_argv(path, text):
     """The command that sends a reply, for a caller that wants to run it itself."""
     return [HELPER, "send", path, text]
+
+
+def dismiss_argv(path):
+    """The command that clears a notification on the phone."""
+    return [HELPER, "dismiss", path]
+
+
+def keep_on_phone():
+    """Should a message answered or waved away here stay on the phone?
+
+    Phone Link clears it, and so does phonelink; PHONELINK_KEEP_ON_PHONE=1 is
+    for anyone who would rather deal with it twice.
+    """
+    return os.environ.get("PHONELINK_KEEP_ON_PHONE", "") not in ("", "0")
+
+
+def dismiss(path):
+    """Clear it on the phone, without waiting and without minding failure."""
+    try:
+        subprocess.Popen(dismiss_argv(path), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass

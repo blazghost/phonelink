@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "phonelink.phone",
+  "name": "Phone",
+  "version": "1.0.0",
+  "author": "phonelink",
+  "description": "Your Android phone in the bar: battery, signal and waiting messages",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Phone",
+    "description": "Battery, cellular signal and how many conversations are waiting; click to open Messages",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "interval": 20,
+      "showBattery": true,
+      "showSignal": true,
+      "showWaiting": true,
+      "lowBattery": 20,
+      "command": "phonelink"
+    },
+    "schema": [
+      {
+        "key": "interval",
+        "type": "number",
+        "label": "Refresh (seconds)",
+        "description": "How often to ask the phone. Each check is one short D-Bus call.",
+        "defaultValue": 20
+      },
+      {
+        "key": "showBattery",
+        "type": "boolean",
+        "label": "Battery",
+        "description": "Show the phone's charge.",
+        "defaultValue": true
+      },
+      {
+        "key": "showSignal",
+        "type": "boolean",
+        "label": "Signal",
+        "description": "Show cellular bars. Needs the phone-state permission in KDE Connect on Android; without it there is nothing to show.",
+        "defaultValue": true
+      },
+      {
+        "key": "showWaiting",
+        "type": "boolean",
+        "label": "Waiting messages",
+        "description": "Show how many conversations are waiting for an answer.",
+        "defaultValue": true
+      },
+      {
+        "key": "lowBattery",
+        "type": "number",
+        "label": "Low battery at",
+        "description": "Below this percentage the charge is drawn in the urgent colour.",
+        "defaultValue": 20
+      },
+      {
+        "key": "command",
+        "type": "string",
+        "label": "phonelink command",
+        "description": "Normally just \"phonelink\". Point this at a checkout to run one that is not installed.",
+        "defaultValue": "phonelink"
+      }
+    ]
+  }
+}

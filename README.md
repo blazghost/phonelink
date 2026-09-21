@@ -167,6 +167,47 @@ Both open floating, centred and fully opaque. Opaque on purpose: a floating
 window under Omarchy's default translucency shows whatever is behind it
 unblurred, and a message is not readable through another terminal.
 
+## The phone in your bar
+
+![the phone widget in the Omarchy bar](docs/bar-widget.png)
+
+Battery, cellular signal, and how many conversations are waiting for an
+answer. Click it for Messages, right-click to answer the newest notification,
+middle-click to restart KDE Connect. Hovering says which phone, how much
+charge is left, and who is waiting.
+
+`install.sh` adds it to the bar once, beside the other status widgets. After
+that it is yours:
+
+```bash
+omarchy bar move phonelink.phone --section center   # somewhere else
+omarchy bar set phonelink.phone interval 60         # ask less often
+omarchy bar set phonelink.phone showSignal false    # hide a reading you don't get
+omarchy plugin disable phonelink.phone              # take it off the bar
+```
+
+The signal bars need KDE Connect's phone-state permission on Android. Without
+it the phone reports "unknown" rather than a number, and the widget shows
+nothing rather than something wrong. When KDE Connect is wedged or not
+running, the widget turns into the same warning the toasts give.
+
+It runs `phonelink bar`, which prints one line of JSON and is useful on its
+own:
+
+```bash
+$ phonelink bar --pretty
+{
+  "state": "ok",
+  "device": "Galaxy S26 Ultra",
+  "battery": 22,
+  "charging": false,
+  "bars": null,
+  "network": "",
+  "waiting": 2,
+  "from": ["mom", "21394"]
+}
+```
+
 ## Notification toasts
 
 `phonelink toasts on` (which `install.sh` runs) replaces the plain popup KDE
@@ -217,6 +258,21 @@ The card stays until KDE Connect answers again, then closes itself. Dismiss it
 and it stays away until the state changes. `phonelink kde restart` is the same
 thing from a terminal.
 
+### Answered here, cleared there
+
+Answering a message from a toast or the reply window clears it on the phone as
+well, the way Phone Link does -- so you don't pick the phone up to find the
+same message still waiting. Waving a toast away does the same; letting one
+time out does not, since you may never have looked at it.
+`PHONELINK_KEEP_ON_PHONE=1` turns it off.
+
+Calls stay KDE Connect's own popup rather than a phonelink card. KDE Connect
+shows an incoming call with a **Mute Call** button, and mute is the one thing
+worth having there -- but it can only be sent from that popup. The telephony
+plugin's D-Bus interface offers the call as a signal and nothing else, so a
+phonelink card would look nicer and do less. If that changes upstream, this is
+the first thing to add.
+
 ## Tuning
 
 ```sh
@@ -266,6 +322,7 @@ phonelink                   the command itself: bash over KDE Connect, scrcpy, a
 lib/phonelink-reply-gtk.py  the reply window
 lib/phonelink-toastd.py     the notification toasts (a systemd user service)
 lib/phonelink-messages.py   the Messages window
+lib/phonelink-bar.py        what the phone is doing, as JSON, for the bar widget
 lib/kdeconnect-notify.py    list and answer notifications from a shell
 lib/phonelink/              what those share:
     theme.py                the Omarchy palette and the CSS built from it
@@ -274,6 +331,7 @@ lib/phonelink/              what those share:
     kdeconnect.py           devices, notifications and replies over D-Bus
     helper.py               the same as a subprocess, so a window can be stubbed
     sms.py                  numbers, contacts, dates, the SMS/MMS message
+integration/omarchy-plugin/ the bar widget, as an Omarchy shell plugin
 tests/                      the checks below
 ```
 
