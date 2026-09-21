@@ -29,16 +29,31 @@ case ":$PATH:" in
   *) printf '    \033[33mnote:\033[0m %s is not on your PATH\n' "$BIN_DIR" ;;
 esac
 
-# Append a snippet to a config file unless its marker is already there. Each
-# snippet gets its own marker so an update adds new pieces without duplicating
-# the ones you already have.
-append_once() {
-  local target="$1" marker="$2" snippet="$3" label="$4"
+# One mechanism for every snippet: each carries phonelink:<name>:begin vN and
+# :end markers, and integration/install-block.py adds it, replaces it in place
+# when its version has moved on, or leaves it alone when it is already current.
+# Anything of yours outside those markers is never touched. Text given after the
+# label identifies an older, unmarked version of the same rule, so an install
+# from before the markers is upgraded rather than duplicated -- which is what
+# used to need a hand-written migration in here for each release.
+block() {
+  local target="$1" snippet="$2" label="$3"; shift 3
   if [[ ! -f $target ]]; then skip "$target not found — skipped"; return 0; fi
-  if grep -qF "$marker" "$target"; then skip "$label: already present"; return 0; fi
   cp "$target" "$target.bak.$TS"
-  cat "$snippet" >> "$target"
-  note "$label: added (backup: $(basename "$target").bak.$TS)"
+  local backup result
+  backup="$(basename "$target").bak.$TS"
+  if ! result=$(python3 "$SRC_DIR/integration/install-block.py" "$target" "$snippet" "$@"); then
+    mv "$target.bak.$TS" "$target"
+    skip "$label: could not be applied — left as it was"
+    return 0
+  fi
+  case "$result" in
+    current)  rm -f "$target.bak.$TS"; skip "$label: already current" ;;
+    added)    note "$label: added (backup: $backup)" ;;
+    updated)  note "$label: updated to this version (backup: $backup)" ;;
+    migrated) note "$label: replaced the older rule (backup: $backup)" ;;
+    *)        rm -f "$target.bak.$TS"; skip "$label: $result" ;;
+  esac
 }
 
 if [[ ! -d ${HOME}/.config/omarchy ]]; then
@@ -95,52 +110,24 @@ else
 fi
 
 step "Keybindings"
-append_once "$HYPR_DIR/bindings.lua" "omarchy-menu summon phone" \
-  "$SRC_DIR/integration/bindings.lua.snippet" "SUPER+SHIFT+L (Phone menu)"
-append_once "$HYPR_DIR/bindings.lua" "phonelink reply" \
-  "$SRC_DIR/integration/bindings-reply.lua.snippet" "SUPER+SHIFT+R (Reply)"
+block "$HYPR_DIR/bindings.lua" "$SRC_DIR/integration/bindings.lua.snippet" \
+  "SUPER+SHIFT+L (Phone menu)" "omarchy-menu summon phone"
+block "$HYPR_DIR/bindings.lua" "$SRC_DIR/integration/bindings-reply.lua.snippet" \
+  "SUPER+SHIFT+R (Reply)" '"phonelink reply"' 
 
 step "Window rules"
-# Markers match the rule itself, never the comment above it -- comment wording
-# changes between versions, and a marker that drifts silently duplicates rules.
-append_once "$HYPR_DIR/hyprland.lua" 'o.window("^([sS]crcpy)$"' \
-  "$SRC_DIR/integration/hyprland.lua.snippet" "scrcpy (opaque, no idle-lock)"
-# Matched literally, backslashes and all: the Lua rule escapes the dots.
-append_once "$HYPR_DIR/hyprland.lua" 'org\\.kde\\.kdeconnect\\.daemon' \
-  "$SRC_DIR/integration/hyprland-reply.lua.snippet" "KDE Connect reply dialog (float)"
-# The panel rule changed shape between versions -- it used to pin a size, which
-# now fights the height phonelink asks foot for. append_once can only add, so
-# drop any earlier copy first; the replacement carries begin/end markers so
-# future revisions can be swapped in place.
-if [[ -f $HYPR_DIR/hyprland.lua ]] && grep -qF 'org\\.omarchy\\.phonelink' "$HYPR_DIR/hyprland.lua" \
-   && ! grep -qF 'phonelink:panel:begin' "$HYPR_DIR/hyprland.lua"; then
-  cp "$HYPR_DIR/hyprland.lua" "$HYPR_DIR/hyprland.lua.bak.$TS"
-  python3 - "$HYPR_DIR/hyprland.lua" <<'PY'
-import pathlib, sys
-
-path = pathlib.Path(sys.argv[1])
-lines = path.read_text().splitlines(keepends=True)
-
-start = next(i for i, l in enumerate(lines) if r'org\\.omarchy\\.phonelink' in l)
-# Walk back over the comment block that introduces the rule...
-while start > 0 and lines[start - 1].lstrip().startswith("--"):
-    start -= 1
-while start > 0 and not lines[start - 1].strip():
-    start -= 1
-# ...and forward to the line that closes the o.window call.
-end = start
-while end < len(lines) and lines[end].rstrip() != "})":
-    end += 1
-end += 1
-
-path.write_text("".join(lines[:start] + lines[end:]))
-PY
-  note "removed the previous fixed-size panel rule"
-fi
-append_once "$HYPR_DIR/hyprland.lua" 'phonelink:panel:begin' \
-  "$SRC_DIR/integration/hyprland-panel.lua.snippet" "phonelink reply panel (float)"
-append_once "$HYPR_DIR/hyprland.lua" 'phonelink:messages' \
-  "$SRC_DIR/integration/hyprland-messages.lua.snippet" "Messages window (opaque)"
+# The text after each label is how the rule looked before it had markers --
+# matched literally, backslashes and all, since the Lua escapes its dots.
+block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland.lua.snippet" \
+  "scrcpy (opaque, no idle-lock)" 'o.window("^([sS]crcpy)$"'
+block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-reply.lua.snippet" \
+  "KDE Connect reply dialog (float)" 'org\\.kde\\.kdeconnect\\.daemon'
+# The panel rule used to pin a size, which fights the height phonelink asks foot
+# for; both that version and the unversioned marked one are replaced in place.
+block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-panel.lua.snippet" \
+  "phonelink reply panel (float)" 'o.window("^(org\\.omarchy\\.phonelink)$"'
+block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-messages.lua.snippet" \
+  "Messages window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.messages)$"'
 
 step "Phone notification toasts"
 # Delegated to `phonelink toasts on`, which is also how you turn them back on

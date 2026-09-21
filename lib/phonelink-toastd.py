@@ -49,6 +49,11 @@ PLUGIN_IFACE = kde.NOTIF_PLUGIN_IFACE
 DEVICES = kde.DEVICES + "/"
 STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
 MAX_TOASTS = 3
+# The health toast's key, in the same namespace as a notification's object path
+# so one dictionary of live toasts covers both.
+HEALTH_KEY = "phonelink:health"
+HEALTH_EVERY = 60   # seconds between checks while KDE Connect is answering
+HEALTH_RETRY = 15   # ... and while it is not, so the toast clears soon after
 VERTICAL = Gtk.Orientation.VERTICAL
 # Omarchy's normal-urgency lifetime; the countdown pauses while you hover or type.
 DURATION_MS = int(os.environ.get("PHONELINK_TOAST_MS", "8000"))
@@ -179,6 +184,8 @@ window.phonelink-toast {{ background: transparent; }}
 .toast .app-glyph {{ font-family: "JetBrainsMono Nerd Font", monospace;
                      font-size: {self.caption_px}px; color: {self.countdown}; }}
 .toast .app     {{ font-size: {self.caption_px}px; color: {p['muted']}; }}
+.toast .state-glyph {{ font-family: "JetBrainsMono Nerd Font", monospace;
+                       font-size: {round(self.icon * 0.66)}px; color: {p['orange']}; }}
 .toast .name    {{ font-size: {self.title_px}px; font-weight: 700; color: {self.text}; }}
 .toast .message {{ font-size: {self.body_px}px; color: {darker(self.text, 1.15)}; }}
 .toast .close   {{ min-width: 24px; min-height: 24px; padding: 0; border-radius: 999px;
@@ -235,6 +242,29 @@ DEMO_THREAD = ("<b>Amos Burton</b><br/>Reactor's back online<br/>"
                "<b>Naomi Nagata</b><br/>Still seeing a fault on the rail, checking every range")
 
 
+def health_note(state, on_restart):
+    """The card that says KDE Connect is not answering, and offers the fix."""
+    gone = state == kde.GONE
+    return {
+        "path": HEALTH_KEY,
+        "app": "phonelink",
+        "package": "",
+        "title": "KDE Connect isn't running" if gone else "KDE Connect isn't answering",
+        "text": ("Phone notifications, replies and Messages stay quiet until it starts."
+                 if gone else
+                 "It is still on the bus but not responding. Toasts, replies and "
+                 "Messages stay quiet until it is restarted."),
+        "ticker": "",
+        "thread": [],
+        "icon": "",
+        "repliable": False,
+        "silent": False,
+        "sticky": True,
+        "glyph": "\U000f0026",  # Material Design "alert", as in Omarchy's own shell
+        "action": ("Start KDE Connect" if gone else "Restart KDE Connect", on_restart),
+    }
+
+
 def demo_notes():
     def note(i, app, package, title, text, repliable):
         return {"path": f"demo:{i}", "app": app, "package": package, "title": title,
@@ -243,7 +273,10 @@ def demo_notes():
     return [note(1, "Signal", "org.thoughtcrime.securesms", "Rocinante crew", DEMO_THREAD, True),
             note(2, "Instagram", "com.instagram.android", "bobbie.draper", "liked your reel", False),
             note(3, "Messenger", "com.facebook.orca", "Chrisjen Avasarala",
-                 "Call me when you land. We need to talk.", True)]
+                 "Call me when you land. We need to talk.", True),
+            # The health card, so its look can be checked without hanging the
+            # daemon. Its button does nothing here.
+            health_note(kde.HUNG, lambda toast: None)]
 
 
 # ---------------------------------------------------------------------- toast
@@ -253,6 +286,9 @@ class Toast:
     def __init__(self, daemon, note):
         self.daemon, self.note, self.key = daemon, note, note["path"]
         self.remaining, self.hovered, self.busy, self.closed = 1.0, False, False, False
+        # A sticky toast stays until what it reports is over -- a phone
+        # notification is news, a broken KDE Connect is a state.
+        self.sticky = bool(note.get("sticky"))
         self.entry = self.send_btn = self.error = None
         look = daemon.look
 
@@ -323,6 +359,13 @@ class Toast:
             opener.add_css_class("flat")
             opener.connect("clicked", lambda *_: (apps.open_in_app(note["package"], note["app"]), self.close()))
             header.append(opener)
+        if action := note.get("action"):
+            label, on_click = action
+            button = Gtk.Button(label=label, focus_on_click=False, valign=Gtk.Align.CENTER,
+                                sensitive=not note.get("working"))
+            button.add_css_class("flat")
+            button.connect("clicked", lambda *_: on_click(self))
+            header.append(button)
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)
         close.add_css_class("close")
@@ -331,7 +374,13 @@ class Toast:
         self.content.append(header)
 
         main = Gtk.Box(spacing=look.pad_h)
-        av = widgets.avatar(note["title"] or note["app"], look.icon, note.get("icon"))
+        if glyph := note.get("glyph"):
+            # This card is about phonelink, not a person: initials taken off a
+            # sentence ("KA" for "KDE Connect isn't answering") read as nonsense.
+            av = Gtk.Label(label=glyph, width_request=look.icon, height_request=look.icon)
+            av.add_css_class("state-glyph")
+        else:
+            av = widgets.avatar(note["title"] or note["app"], look.icon, note.get("icon"))
         av.set_valign(Gtk.Align.START)
         main.append(av)
         text = Gtk.Box(orientation=VERTICAL, spacing=2, hexpand=True)
@@ -375,6 +424,7 @@ class Toast:
 
     def update(self, note):
         self.note = note
+        self.sticky = bool(note.get("sticky"))
         self.remaining = 1.0  # new text deserves a full look, as Omarchy does
         self.build()
         self.daemon.restack()
@@ -392,6 +442,9 @@ class Toast:
     def tick(self):
         if self.closed:
             return False
+        if self.sticky:
+            self.bar.set_fraction(1.0)
+            return True
         if not self.paused():
             self.remaining -= 50 / DURATION_MS
             if self.remaining <= 0:
@@ -461,6 +514,7 @@ class Daemon:
 
     def __init__(self, app, mode):
         self.app, self.mode, self.toasts = app, mode, []  # newest first
+        self.health_dismissed = False
         self.look = Look()
         Adw.StyleManager.get_default().set_color_scheme(
             Adw.ColorScheme.FORCE_LIGHT if self.look.pal.get("mode") == "light"
@@ -491,6 +545,10 @@ class Daemon:
             kde.BUS.signal_subscribe(sender, kde.NOTIF_IFACE, "ready", None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_ready)
             print("phonelink toasts: listening for phone notifications", flush=True)
+            # kdeconnectd has hung outright: on the bus, answering nothing, with
+            # toasts, replies and Messages all quiet and no sign why. Watch for
+            # it and say so, with the one button that fixes it.
+            GLib.timeout_add_seconds(5, self.check_health)
         elif self.mode == "demo":
             for i, note in enumerate(demo_notes()):
                 GLib.timeout_add(350 * i + 1, lambda n=note: self.show(n) or False)
@@ -501,6 +559,59 @@ class Daemon:
                 self.app.release()
                 return
             self.show(note)
+
+    # -- is KDE Connect still there?
+
+    def check_health(self):
+        kde.health(self.on_health)
+        return False  # each answer schedules the next check itself
+
+    def on_health(self, state):
+        if state == kde.OK:
+            self.health_dismissed = False
+            if toast := self.find(HEALTH_KEY):
+                toast.close()
+        elif not self.health_dismissed:
+            self.show(health_note(state, self.restart_kde))
+        GLib.timeout_add_seconds(HEALTH_EVERY if state == kde.OK else HEALTH_RETRY,
+                                 self.check_health)
+        return False
+
+    def restart_kde(self, toast):
+        """`phonelink kde restart`, with the toast reporting as it goes."""
+        note = dict(toast.note, title="Restarting KDE Connect", working=True,
+                    text="The phone reconnects by itself.")
+        toast.update(note)
+        try:
+            proc = Gio.Subprocess.new([str(HERE.parent / "phonelink"), "kde", "restart"],
+                                      Gio.SubprocessFlags.STDOUT_SILENCE
+                                      | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as exc:
+            toast.update(dict(note, title="Could not restart KDE Connect",
+                              text=exc.message, working=False))
+            return
+
+        def finished(p, result):
+            try:
+                _, _, err = p.communicate_utf8_finish(result)
+            except GLib.Error as exc:
+                err, ok = exc.message, False
+            else:
+                ok = p.get_successful()
+            if not ok:
+                toast.update(dict(note, title="Could not restart KDE Connect",
+                                  text=(err or "").strip() or "See `phonelink kde restart`.",
+                                  working=False))
+                return
+            # It takes a moment to come back up, and the toast closes itself
+            # when the next check finds it answering.
+            toast.update(dict(note, title="Restarting KDE Connect",
+                              text="Waiting for it to come back...", working=True))
+            GLib.timeout_add_seconds(4, self.check_health)
+        proc.communicate_utf8_async(None, None, finished)
+
+    def find(self, key):
+        return next((t for t in self.toasts if t.key == key), None)
 
     def on_signal(self, _conn, _sender, path, _iface, member, params):
         if not (path.startswith(DEVICES) and path.endswith("/notifications")):
@@ -558,6 +669,9 @@ class Daemon:
             offset += toast.height() + self.look.spacing
 
     def forget(self, toast):
+        if toast.key == HEALTH_KEY and not toast.note.get("working"):
+            # Dismissed on purpose: say no more until it is answering again.
+            self.health_dismissed = True
         if toast in self.toasts:
             self.toasts.remove(toast)
         self.restack()

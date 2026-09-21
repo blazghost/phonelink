@@ -26,7 +26,7 @@ jobs:
       - name: Lint
         run: |
           pipx install ruff || pip install --break-system-packages ruff
-          ruff check lib tests
+          ruff check lib tests integration
 
       - name: Shell, syntax, unit and D-Bus tests
         run: tests/run.sh

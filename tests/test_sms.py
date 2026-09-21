@@ -162,5 +162,48 @@ class Message(unittest.TestCase):
         self.assertEqual(m.attachments[0].kind, "video")
 
 
+
+
+class MatchAttachment(unittest.TestCase):
+    """Which download belongs to which bubble.
+
+    The old rule also accepted a prefix, and assumed a single transfer in
+    flight had to be the file that arrived -- either of which could put another
+    conversation's picture in a bubble, since KDE Connect's own app downloads
+    into the same folder.
+    """
+
+    WAITING = ["PART_1773456851589.jpg", "PART_1786542647625_63415634.jpg"]
+
+    def test_exact_name(self):
+        self.assertEqual(sms.match_attachment("PART_1773456851589.jpg", self.WAITING),
+                         "PART_1773456851589.jpg")
+
+    def test_the_extension_may_differ(self):
+        self.assertEqual(sms.match_attachment("PART_1773456851589.jpeg", self.WAITING),
+                         "PART_1773456851589.jpg")
+
+    def test_an_id_without_an_extension(self):
+        self.assertEqual(sms.match_attachment("PART_1773456851589", self.WAITING),
+                         "PART_1773456851589.jpg")
+
+    def test_a_prefix_is_not_a_match(self):
+        # PART_17734568515891234 starts with a waiting id, and is a different file.
+        self.assertIsNone(sms.match_attachment("PART_17734568515891234.jpg", self.WAITING))
+
+    def test_a_file_nobody_asked_for(self):
+        self.assertIsNone(sms.match_attachment("IMG_0042.jpg", self.WAITING))
+
+    def test_nothing_waiting(self):
+        self.assertIsNone(sms.match_attachment("PART_1773456851589.jpg", []))
+
+    def test_a_longer_id_is_matched_in_full(self):
+        self.assertEqual(sms.match_attachment("PART_1786542647625_63415634.jpg", self.WAITING),
+                         "PART_1786542647625_63415634.jpg")
+
+    def test_a_path_rather_than_a_name(self):
+        self.assertIsNone(sms.match_attachment("", self.WAITING))
+
+
 if __name__ == "__main__":
     unittest.main()
