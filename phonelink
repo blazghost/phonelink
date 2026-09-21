@@ -612,7 +612,12 @@ phonelink — Android on your Linux desktop
   reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
   messages          the phone's texts, with MMS photos and video, Phone Link-style
+  text [who] [msg]  start a text to anyone: a contact's name, or a number.
+                    With a message it is sent straight away; without one the
+                    Messages window opens on a new, empty text.
   photos            the phone's camera roll as a grid: open, save, drag out
+  media [cmd]       what the phone is playing; play, pause, next, previous,
+                    volume, seek (the bar widget reads `media --json`)
   bar               what the phone is doing, as JSON (the Omarchy bar widget reads this)
   toasts on|off     Phone Link-style popups for phone notifications, with a
                     reply box right in the popup (runs as a systemd user service)
@@ -752,7 +757,9 @@ main() {
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
+    text|new)      shift; cmd_text "$@" ;;
     photos|roll)   shift; cmd_photos "$@" ;;
+    media|music)   shift; cmd_media "$@" ;;
     bar)           shift; cmd_bar "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
@@ -778,6 +785,29 @@ cmd_messages() {
   gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
     || die "the Messages window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
   exec python3 "$SRC_DIR/lib/phonelink-messages.py" "$@"
+}
+
+# Start a text to somebody there is no thread with yet. With a message it goes
+# out from the terminal (lib/phonelink-text.py, no GUI needed, so it can sit on
+# a keybind); without one the Messages window opens on a new text, since that
+# is where you can see what you are typing and add a picture.
+cmd_text() {
+  need python3
+  if [[ $# -ge 2 && ${1-} != -* ]]; then
+    exec python3 "$SRC_DIR/lib/phonelink-text.py" "$@"
+  fi
+  [[ ${1-} == --list ]] && exec python3 "$SRC_DIR/lib/phonelink-text.py" "$@"
+  gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
+    || die "with no message to send this opens the Messages window, which needs GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
+  exec python3 "$SRC_DIR/lib/phonelink-messages.py" --new "$@"
+}
+
+# Play, pause and skip what the phone is playing (lib/phonelink-media.py), over
+# KDE Connect's mprisremote plugin. The audio stays on the phone; only the
+# buttons are here, and `media --json` is what the bar widget reads.
+cmd_media() {
+  need python3
+  exec python3 "$SRC_DIR/lib/phonelink-media.py" "$@"
 }
 
 # The phone's camera roll as a grid (lib/phonelink-photos.py), over the storage

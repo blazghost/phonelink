@@ -36,7 +36,8 @@ sys.path.insert(0, str(HERE))
 
 from phonelink import kdeconnect as kde  # noqa: E402
 from phonelink.sms import (FAILED, PAGE, Msg, day_label, load_contacts,  # noqa: E402
-                           match_attachment, number_key, pretty_number, when)
+                           load_people, match_attachment, match_people, number_key,
+                           pretty_number, resolve_recipient, when)
 from phonelink import theme, widgets  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.messages"
@@ -133,6 +134,17 @@ class Phone:
                   GLib.Variant("(xsav)", (tid, text, [GLib.Variant("s", p) for p in paths])),
                   on_error)
 
+    def send_new(self, address, text, paths, on_error=None):
+        """Text a number there is no conversation with yet.
+
+        The phone files it into a thread of its own choosing and reports that
+        back as a conversation, which is the only way to learn its id.
+        """
+        self.fire("sendWithoutConversation",
+                  GLib.Variant("(avsav)", ([GLib.Variant("(s)", (address,))], text,
+                                           [GLib.Variant("s", p) for p in paths])),
+                  on_error)
+
     def cache_dir(self):
         return Path(GLib.get_user_cache_dir()) / "kdeconnect.daemon" / (self.name or "")
 
@@ -227,6 +239,10 @@ def extra_css(p):
                     background: transparent; color: {p['muted']}; }}
 .compose .attach:hover {{ color: {p['foreground']}; background: alpha({p['foreground']}, 0.06); }}
 .load-earlier {{ margin: 6px 0; }}
+.to-entry {{ border-radius: 999px; }}
+.person-row {{ padding: 6px 10px; border-radius: 12px; }}
+.compose-hint {{ color: {p['foreground']}; margin: 10px 4px 2px; }}
+.compose-hint-dim {{ font-size: 9pt; color: {p['muted']}; margin: 2px 4px 8px; }}
 """
 
 
@@ -239,10 +255,20 @@ class ThreadView(Adw.Bin):
         self.win, self.tid = win, None
         self.pending, self.sending = [], []
         self._render_id = 0
+        # True while writing to somebody there is no thread with yet: there is
+        # no conversation id to send to, so the recipient comes out of the To
+        # field instead.
+        self.composing = False
 
         self.header = Adw.HeaderBar(show_title=False)
         self.who = Gtk.Box(spacing=10, valign=Gtk.Align.CENTER, margin_start=4)
         self.header.pack_start(self.who)
+
+        self.to_entry = Gtk.Entry(hexpand=True, width_chars=24,
+                                  placeholder_text="Name or phone number")
+        self.to_entry.add_css_class("to-entry")
+        self.to_entry.connect("changed", lambda *_: self.on_to_changed())
+        self.to_entry.connect("activate", lambda *_: self.entry.grab_focus())
 
         self.thread = Gtk.Box(orientation=VERTICAL, spacing=3, valign=Gtk.Align.END)
         self.thread.add_css_class("thread")
@@ -289,6 +315,7 @@ class ThreadView(Adw.Bin):
 
     def show_thread(self, tid):
         self.tid = tid
+        self.composing = False
         self.pending.clear()
         self.sync_pending()
         title, subtitle, photo = self.win.people(tid)
@@ -304,6 +331,98 @@ class ThreadView(Adw.Bin):
         self.render(stick=True)
         self.win.phone.request_thread(tid, 0, PAGE)
         self.entry.grab_focus_without_selecting()
+
+    # -- a text to somebody new
+
+    def start_new(self, prefill=""):
+        """Swap the thread for a To field and whoever can be texted.
+
+        `tid` stays None throughout, which is also what keeps the live
+        conversation updates from drawing over the pane: render() draws a
+        thread only when there is one.
+        """
+        self.tid = None
+        self.composing = True
+        self.pending.clear()
+        self.sync_pending()
+        widgets.clear(self.who)
+        title = Gtk.Box(orientation=VERTICAL, valign=Gtk.Align.CENTER)
+        title.append(widgets.label("New message", "title-name"))
+        self.who.append(title)
+        self.who.append(self.to_entry)
+        self.entry.set_placeholder_text("Text message")
+        self.to_entry.set_text(prefill)
+        self.render_compose()
+        self.to_entry.grab_focus()
+
+    def on_to_changed(self):
+        if self.composing:
+            self.render_compose()
+            self.sync_send()
+
+    def render_compose(self):
+        """Who you could be writing to, for what has been typed so far."""
+        widgets.clear(self.thread)
+        typed = self.to_entry.get_text().strip()
+        people = self.win.people_list
+
+        if not people:
+            # The phone has not granted KDE Connect its Contacts permission,
+            # so there are no names to offer -- numbers still work.
+            self.thread.append(widgets.label(
+                "Type a phone number to text it.", "compose-hint", wrap=True))
+            self.thread.append(widgets.label(
+                "To text by name, allow Contacts for KDE Connect on the phone "
+                "(Settings → Apps → KDE Connect → Permissions), then reconnect it.",
+                "compose-hint-dim", wrap=True, max_width_chars=48))
+            return
+
+        hits = match_people(people, typed)[:8]
+        if not hits:
+            self.thread.append(widgets.label(f"No contact matching “{typed}”", "compose-hint"))
+            return
+        self.thread.append(widgets.label("Suggested" if not typed else "Contacts",
+                                         "compose-hint-dim"))
+        for person in hits:
+            self.thread.append(self.person_row(person))
+
+    def person_row(self, person):
+        row = Gtk.Button(css_classes=["flat", "person-row"])
+        box = Gtk.Box(spacing=10)
+        box.append(self.win.avatar_for(person["name"], 34, person["photo"]))
+        names = Gtk.Box(orientation=VERTICAL, valign=Gtk.Align.CENTER)
+        names.append(widgets.label(person["name"], "title-name",
+                                   ellipsize=Pango.EllipsizeMode.END))
+        names.append(widgets.label(pretty_number(person["number"]), "title-app"))
+        box.append(names)
+        row.set_child(box)
+        row.connect("clicked", lambda *_, p=person: self.choose_person(p))
+        return row
+
+    def choose_person(self, person):
+        # The number, not the name: a contact with two numbers would otherwise
+        # be ambiguous again by the time Send is pressed.
+        self.to_entry.set_text(pretty_number(person["number"]))
+        self.entry.grab_focus()
+
+    def recipient(self):
+        """(address, who it is, error) for what the To field says right now."""
+        return resolve_recipient(self.to_entry.get_text(), self.win.people_list)
+
+    def send_new(self, text, paths):
+        address, who, problem = self.recipient()
+        if problem:
+            self.toast(problem)
+            return
+        self.win.phone.send_new(address, text, paths,
+                                on_error=lambda message: self.toast(kde.friendly_error(message)))
+        self.entry.set_text("")
+        self.pending.clear()
+        self.sync_pending()
+        self.toast(f"Sent to {who}")
+        # The phone answers with the conversation it filed the message under;
+        # the window opens it when it arrives, so the reply lands somewhere.
+        self.win.follow(address)
 
     def schedule(self):
         """Many messages arrive in a burst; draw once they have settled."""
@@ -531,12 +650,18 @@ class ThreadView(Adw.Bin):
     # -- sending
 
     def sync_send(self):
-        self.send_btn.set_sensitive(self.tid is not None
+        ready = self.tid is not None or (self.composing and self.to_entry.get_text().strip())
+        self.send_btn.set_sensitive(bool(ready)
                                     and bool(self.entry.get_text().strip() or self.pending))
 
     def send(self, *_):
         text, paths = self.entry.get_text().strip(), list(self.pending)
-        if self.tid is None or not (text or paths):
+        if not (text or paths):
+            return
+        if self.composing:
+            self.send_new(text, paths)
+            return
+        if self.tid is None:
             return
         item = {"text": text, "paths": paths, "since": time.time() * 1000 - 60_000}
         self.win.phone.reply(self.tid, text, paths,
@@ -602,10 +727,12 @@ class ThreadView(Adw.Bin):
 
 class MessagesWindow(Adw.ApplicationWindow):
 
-    def __init__(self, app, phone):
+    def __init__(self, app, phone, new_to=None):
         super().__init__(application=app, title="Messages")
         self.set_default_size(1000, 700)
         self.phone = phone
+        # `phonelink text [who]` opens the window straight onto a blank text.
+        self.new_to = new_to
         self.threads, self.latest = {}, {}
         self.more, self.expect_more = {}, {}
         self.row_by_tid = {}
@@ -624,6 +751,9 @@ class MessagesWindow(Adw.ApplicationWindow):
             return
 
         self.contacts = load_contacts(phone.id)
+        self.people_list = load_people(phone.id)
+        # The number a new text has just gone to, until its thread turns up.
+        self.following = None
         self.files = Files(phone)
         self.view = ThreadView(self)
 
@@ -643,6 +773,10 @@ class MessagesWindow(Adw.ApplicationWindow):
         side = Adw.ToolbarView()
         side_header = Adw.HeaderBar()
         side_header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=phone.name))
+        new_btn = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="New message",
+                             focus_on_click=False)
+        new_btn.connect("clicked", lambda *_: self.start_new())
+        side_header.pack_end(new_btn)
         side.add_top_bar(side_header)
         side.set_content(side_body)
 
@@ -673,7 +807,9 @@ class MessagesWindow(Adw.ApplicationWindow):
             phone.request_all()
         for tid in self.latest:
             self.ensure_row(tid)
-        if first := self.rows.get_row_at_index(0):
+        if new_to is not None:
+            self.start_new(new_to)
+        elif first := self.rows.get_row_at_index(0):
             self.rows.select_row(first)
 
     # -- people
@@ -719,10 +855,33 @@ class MessagesWindow(Adw.ApplicationWindow):
         if m.thread not in self.latest or m.date >= self.latest[m.thread].date:
             self.latest[m.thread] = m
 
+    # -- a text to somebody new
+
+    def start_new(self, prefill=""):
+        """Leave whatever thread is open and write to somebody instead."""
+        self.rows.select_row(None)
+        self.view.start_new(prefill)
+
+    def follow(self, address):
+        """Open the thread the phone files a just-sent text under, once it says."""
+        self.following = number_key(address) or address
+
+    def open_if_followed(self, m):
+        """The answer to `follow`: the sent message coming back with its thread."""
+        if not self.following:
+            return
+        if not any((number_key(a) or a) == self.following for a in m.addresses):
+            return
+        self.following = None
+        self.ensure_row(m.thread)
+        if row := self.row_by_tid.get(m.thread):
+            self.rows.select_row(row)
+
     def on_message(self, _c, _s, _p, _i, _m, params):
         m = Msg(params.get_child_value(0).get_variant())
         known = m.thread in self.latest
         self.add(m)
+        self.open_if_followed(m)
         if m.thread == self.view.tid:
             self.view.schedule()
         if not known or self.latest[m.thread] is m:
@@ -753,7 +912,10 @@ class MessagesWindow(Adw.ApplicationWindow):
             row = self.row_by_tid.get(tid)
             if row is None or row.shown_uid != m.uid:
                 self.ensure_row(tid)
-        if self.view.tid is None and (first := self.rows.get_row_at_index(0)):
+        # Never while a new text is being written: the pane would be pulled
+        # out from under whoever is typing in it.
+        if self.view.tid is None and not self.view.composing \
+                and (first := self.rows.get_row_at_index(0)):
             self.rows.select_row(first)
         return False
 
@@ -828,9 +990,16 @@ class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.win = None
+        self.new_to = None
 
     def do_startup(self):
         Adw.Application.do_startup(self)
+        # `phonelink text` on a window that is already open arrives here: the
+        # second process cannot hand over its arguments, but it can activate
+        # an action on this one, which is what raises the composer.
+        action = Gio.SimpleAction.new("new-message", GLib.VariantType.new("s"))
+        action.connect("activate", self.on_new_message)
+        self.add_action(action)
         pal = theme.load_palette()
         Adw.StyleManager.get_default().set_color_scheme(
             Adw.ColorScheme.FORCE_LIGHT if pal.get("mode") == "light"
@@ -840,13 +1009,66 @@ class App(Adw.Application):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+    def on_new_message(self, _action, param):
+        if self.win:
+            self.win.present()
+            if self.win.phone.id:
+                self.win.start_new(param.get_string())
+
     def do_activate(self):
         if self.win:  # opened again while open: bring it forward
             self.win.present()
             return
-        self.win = MessagesWindow(self, Phone())
+        self.win = MessagesWindow(self, Phone(), self.new_to)
         self.win.present()
 
 
+def new_to(argv=None):
+    """`--new [who]` from `phonelink text`, or None for the ordinary window.
+
+    GTK's own argument handling is deliberately not used -- the application is
+    run with the program name alone, so that a second `phonelink messages`
+    raises the open window rather than starting another.
+    """
+    argv = sys.argv if argv is None else argv
+    if "--new" not in argv:
+        return None
+    rest = [a for a in argv[argv.index("--new") + 1:] if not a.startswith("-")]
+    return " ".join(rest).strip()
+
+
+def tell_the_open_window(who):
+    """Hand a recipient to a Messages window that is already open, or say no.
+
+    A second process cannot pass arguments to the first -- GTK raises the open
+    window and drops them -- so this asks the running one to open its composer
+    over the interface every GApplication exports.
+    """
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    try:
+        owned = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                              "org.freedesktop.DBus", "NameHasOwner",
+                              GLib.Variant("(s)", (APP_ID,)), None,
+                              Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
+        if not owned:
+            return False
+        bus.call_sync(APP_ID, "/" + APP_ID.replace(".", "/"),
+                      "org.freedesktop.Application", "ActivateAction",
+                      GLib.Variant("(sava{sv})",
+                                   ("new-message", [GLib.Variant("s", who)], {})),
+                      None, Gio.DBusCallFlags.NONE, 5000, None)
+        return True
+    except GLib.Error:
+        return False  # not answering: open a window of our own instead
+
+
+def main(argv):
+    app = App()
+    app.new_to = new_to(argv)
+    if app.new_to is not None and tell_the_open_window(app.new_to):
+        return 0
+    return app.run([argv[0]])
+
+
 if __name__ == "__main__":
-    sys.exit(App().run([sys.argv[0]]))
+    sys.exit(main(sys.argv))

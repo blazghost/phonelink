@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "phonelink.media",
+  "name": "Phone media",
+  "version": "1.0.0",
+  "author": "phonelink",
+  "description": "What the phone is playing, with play/pause, skip and volume",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Phone media",
+    "description": "The track playing on the phone; click to play or pause, right to skip, wheel for volume. Takes no room when nothing is playing.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "interval": 5,
+      "hideWhenIdle": true,
+      "showTitle": true,
+      "maxWidth": 180,
+      "volumeStep": 5,
+      "command": "phonelink"
+    },
+    "schema": [
+      {
+        "key": "interval",
+        "type": "number",
+        "label": "Refresh (seconds)",
+        "description": "How often to ask the phone what is playing. Each check is one short D-Bus call.",
+        "defaultValue": 5
+      },
+      {
+        "key": "hideWhenIdle",
+        "type": "boolean",
+        "label": "Hide when nothing is playing",
+        "description": "Take no room in the bar unless the phone has a player loaded.",
+        "defaultValue": true
+      },
+      {
+        "key": "showTitle",
+        "type": "boolean",
+        "label": "Track title",
+        "description": "Show the title beside the glyph, not just the glyph.",
+        "defaultValue": true
+      },
+      {
+        "key": "maxWidth",
+        "type": "number",
+        "label": "Title width (pixels)",
+        "description": "Longer titles are elided, so one song cannot push the rest of the bar along.",
+        "defaultValue": 180
+      },
+      {
+        "key": "volumeStep",
+        "type": "number",
+        "label": "Volume step",
+        "description": "How much one notch of the wheel changes the phone's volume.",
+        "defaultValue": 5
+      },
+      {
+        "key": "command",
+        "type": "string",
+        "label": "phonelink command",
+        "description": "Normally just \"phonelink\". Point this at a checkout to run one that is not installed.",
+        "defaultValue": "phonelink"
+      }
+    ]
+  }
+}
