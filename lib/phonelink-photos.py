@@ -215,8 +215,11 @@ class PhotosWindow(Adw.ApplicationWindow):
                                 min_children_per_line=1, max_children_per_line=16)
         self.grid.add_css_class("roll")
         self.scroller = Gtk.ScrolledWindow(hexpand=True, vexpand=True, child=self.grid)
-        self.scroller.get_vadjustment().connect("value-changed", lambda *_: self.reveal())
-        self.scroller.connect("notify::height-request", lambda *_: self.reveal())
+        adjustment = self.scroller.get_vadjustment()
+        adjustment.connect("value-changed", lambda *_: self.reveal())
+        # "changed" is the one that fires when the grid finally has a size, so
+        # it is what brings us back after a load that finished first.
+        adjustment.connect("changed", lambda *_: self.reveal())
 
         self.status = Adw.StatusPage(icon_name="image-x-generic-symbolic",
                                      title="Looking for the phone…")
@@ -295,15 +298,18 @@ class PhotosWindow(Adw.ApplicationWindow):
         hundred: the rest are still empty frames costing nothing.
         """
         adjustment = self.scroller.get_vadjustment()
-        top = adjustment.get_value() - AHEAD
-        bottom = adjustment.get_value() + adjustment.get_page_size() + AHEAD
+        scroll, page = adjustment.get_value(), adjustment.get_page_size()
+        # Until GTK has laid the grid out every tile measures as nothing at the
+        # top, and photos.in_view calls that invisible. Waking the phone can
+        # take half a minute -- long enough for the tiles to exist before the
+        # grid has a size -- and the adjustment's "changed" brings us back.
+        if self.grid.get_height() <= 0:
+            return False
         for tile in self.tiles:
             if tile.asked:
                 continue
             ok, rect = tile.compute_bounds(self.grid)
-            if not ok:
-                continue
-            if rect.origin.y + rect.size.height >= top and rect.origin.y <= bottom:
+            if ok and photos.in_view(rect.origin.y, rect.size.height, scroll, page, AHEAD):
                 tile.want()
         return False
 

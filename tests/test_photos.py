@@ -154,6 +154,42 @@ class Scan(unittest.TestCase):
         self.assertEqual(1, len(found))
 
 
+class InView(unittest.TestCase):
+    """Which tiles the grid fetches. Getting this wrong once meant pulling the
+    whole camera roll instead of a screenful."""
+
+    PAGE, AHEAD, TILE = 800, 500, 170
+
+    def near(self, y, scroll=0):
+        return photos.in_view(y, self.TILE, scroll, self.PAGE, self.AHEAD)
+
+    def test_a_tile_on_screen(self):
+        self.assertTrue(self.near(0))
+        self.assertTrue(self.near(400))
+
+    def test_a_tile_just_below_is_fetched_ahead(self):
+        self.assertTrue(self.near(self.PAGE + 100))
+
+    def test_a_tile_far_below_is_not(self):
+        self.assertFalse(self.near(self.PAGE + self.AHEAD + 1))
+
+    def test_a_tile_scrolled_far_above_is_not(self):
+        self.assertFalse(self.near(0, scroll=self.AHEAD + self.TILE + 1))
+
+    def test_a_tile_partly_above_still_counts(self):
+        self.assertTrue(self.near(0, scroll=self.AHEAD + self.TILE - 1))
+
+    def test_before_the_grid_is_laid_out_nothing_is_visible(self):
+        # Every tile measures as nothing at the top until GTK lays the grid
+        # out; calling that visible fetched the entire roll at once.
+        self.assertFalse(photos.in_view(0, 0, 0, 0, self.AHEAD))
+        for y in (0, 1000, 12000):
+            self.assertFalse(photos.in_view(y, self.TILE, 0, 0, self.AHEAD))
+
+    def test_a_tile_with_no_height_is_not_visible(self):
+        self.assertFalse(photos.in_view(0, 0, 0, self.PAGE, self.AHEAD))
+
+
 class Exif(unittest.TestCase):
     def test_the_thumbnail_is_pulled_out(self):
         self.assertEqual((THUMB, 1), photos.embedded_thumbnail(exif_jpeg()))

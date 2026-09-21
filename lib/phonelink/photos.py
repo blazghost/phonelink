@@ -199,6 +199,22 @@ def roll_dirs(*roots):
     return found
 
 
+def in_view(y, height, scroll, page, ahead):
+    """Is a tile at this position worth fetching yet?
+
+    The arithmetic behind the grid's one rule -- fetch a screenful, not the
+    roll -- kept here so it can be tested without a window.
+
+    `page` or `height` of zero means GTK has not laid the grid out, and every
+    tile then measures as nothing at the top. Treating that as visible is what
+    made the window pull two hundred photos at once when waking the phone took
+    long enough for the tiles to exist before the grid had a size.
+    """
+    if page <= 0 or height <= 0:
+        return False
+    return y + height >= scroll - ahead and y <= scroll + page + ahead
+
+
 def scan(dirs, limit=200):
     """The newest `limit` pictures and videos across these folders, newest first.
 
