@@ -612,6 +612,7 @@ phonelink — Android on your Linux desktop
   reply --gui|--tui force the window or the terminal panel (or PHONELINK_UI)
   reply --list      show which notifications can be replied to
   messages          the phone's texts, with MMS photos and video, Phone Link-style
+  photos            the phone's camera roll as a grid: open, save, drag out
   bar               what the phone is doing, as JSON (the Omarchy bar widget reads this)
   toasts on|off     Phone Link-style popups for phone notifications, with a
                     reply box right in the popup (runs as a systemd user service)
@@ -751,6 +752,7 @@ main() {
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
+    photos|roll)   shift; cmd_photos "$@" ;;
     bar)           shift; cmd_bar "$@" ;;
     clip|clipboard) shift; cmd_clip "$@" ;;
     kde)           shift; cmd_kde "$@" ;;
@@ -762,8 +764,6 @@ main() {
   esac
 }
 
-# The phone's SMS/MMS conversations with their photos and video, in a GTK window
-# (lib/phonelink-messages.py) over KDE Connect's conversations interface.
 # What the Omarchy bar widget reads. Plain JSON on stdout, nothing else, so
 # the widget can parse a line and get on with drawing.
 cmd_bar() {
@@ -772,10 +772,22 @@ cmd_bar() {
   exec python3 "$SRC_DIR/lib/phonelink-bar.py" "$@"
 }
 
+# The phone's SMS/MMS conversations with their photos and video, in a GTK window
+# (lib/phonelink-messages.py) over KDE Connect's conversations interface.
 cmd_messages() {
   gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
     || die "the Messages window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
   exec python3 "$SRC_DIR/lib/phonelink-messages.py" "$@"
+}
+
+# The phone's camera roll as a grid (lib/phonelink-photos.py), over the storage
+# KDE Connect exports with its sftp plugin. sshfs does the mounting, so it is
+# the one package this needs beyond the GUI ones.
+cmd_photos() {
+  gui_available && [[ -f $SRC_DIR/lib/phonelink-photos.py ]] \
+    || die "the Photos window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
+  have sshfs || die "the Photos window mounts the phone with sshfs: sudo pacman -S sshfs"
+  exec python3 "$SRC_DIR/lib/phonelink-photos.py" "$@"
 }
 
 main "$@"

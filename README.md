@@ -55,6 +55,7 @@ plain bash and works on any Linux with the four tools installed.
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
+phonelink photos            the phone's camera roll as a grid
 phonelink status            what is connected right now, and what is missing
 phonelink mirror            mirror and control the phone screen
 phonelink desk [package]    run one app on its own virtual display
@@ -99,6 +100,45 @@ limit. So their toasts and their conversations in the reply window get an
 `phonelink desk <package>`, scrcpy on its own virtual display. Every photo and
 video is there, and you can send media as you would on the phone. It needs
 wireless adb, set up once with `phonelink pair`.
+
+## Photos: the camera roll
+
+![the Photos window](docs/photos.png)
+
+`phonelink photos`, or *Photos* in the Phone menu, is Phone Link's Photos tab:
+the last couple of hundred camera photos, screenshots and videos as a grid,
+newest first. Click one to open it, right-click to save it to
+`~/Pictures/Phone`, or drag it straight into another app — a chat window, an
+editor, a file manager. Nothing is copied to the desktop until you ask for it.
+
+It reads the phone's storage through KDE Connect's own sftp plugin, mounted
+with **sshfs** — the one package phonelink needs beyond the GUI ones, installed
+by `setup.sh`. Nothing is uploaded, nothing is synced, and the phone's files
+are never written to.
+
+**Why it opens quickly.** The mount is a phone over wifi, about a megabyte and
+a half a second, and a recent camera roll is most of a gigabyte; fetching it to
+draw thumbnails would take minutes. So the window fetches only the tiles it is
+about to show, a screenful at a time. A camera JPEG carries a small copy of
+itself in its EXIF block, so those cost one 128 KB read instead of two
+megabytes. A HEIC has no such copy — Samsung's put their index after the image
+data, with the thumbnail coded in HEVC — so those are read whole, about a third
+of a second each. Every thumbnail is then shrunk and cached under the phone's
+own size and timestamp, so the second visit is instant and the cache stays
+megabytes rather than gigabytes. More threads do not help; the phone's link is
+the limit.
+
+Videos are listed with a play badge but never fetched for a picture, since a
+frame would mean downloading the whole file. Opening, saving or dragging one
+fetches it then.
+
+Photos deleted on the phone stay in `DCIM/Camera` under a dotted name until
+Android empties its trash; the grid leaves those out, along with shots still
+being written.
+
+If the window says it can't open the phone's storage, unlock the phone and try
+again — the sftp plugin needs it awake, and Android asks for storage permission
+the first time.
 
 ## Replying to notifications
 
@@ -325,6 +365,7 @@ phonelink                   the command itself: bash over KDE Connect, scrcpy, a
 lib/phonelink-reply-gtk.py  the reply window
 lib/phonelink-toastd.py     the notification toasts (a systemd user service)
 lib/phonelink-messages.py   the Messages window
+lib/phonelink-photos.py     the Photos window: the camera roll as a grid
 lib/phonelink-bar.py        what the phone is doing, as JSON, for the bar widget
 lib/kdeconnect-notify.py    list and answer notifications from a shell
 lib/phonelink/              what those share:
@@ -334,6 +375,7 @@ lib/phonelink/              what those share:
     kdeconnect.py           devices, notifications and replies over D-Bus
     helper.py               the same as a subprocess, so a window can be stubbed
     sms.py                  numbers, contacts, dates, the SMS/MMS message
+    photos.py               the sftp mount, the camera roll, thumbnails and their cache
 integration/omarchy-plugin/ the bar widget, as an Omarchy shell plugin
 tests/                      the checks below
 ```
@@ -351,7 +393,9 @@ The unit tests need nothing but Python and PyGObject. The D-Bus tests run
 against `tests/fake_kdeconnect.py`, a stand-in daemon with a desktop and a
 phone on it, on a private bus (`dbus-run-session`) -- so no phone is involved
 and a test reply cannot reach a real contact. The fake refuses to start on a bus
-where the real KDE Connect already is.
+where the real KDE Connect already is. Its sftp plugin hands back a directory
+the test has filled with a camera roll, so the scan, the thumbnails and their
+cache all run against a real filesystem with only the phone pretend.
 
 GitHub runs all of it on every pull request (`.github/workflows/ci.yml`).
 `shellcheck` and `ruff` are used when installed and skipped when not.
