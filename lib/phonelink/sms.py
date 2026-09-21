@@ -43,6 +43,19 @@ class Msg:
         return self.type in OUTGOING
 
 
+def match_attachment(name, waiting):
+    """Which pending attachment a delivered file belongs to, or None.
+
+    KDE Connect writes the file under the attachment's own unique identifier,
+    give or take the extension, so that is all this matches on. Anything looser
+    -- a prefix, or assuming a lone transfer in flight must be the file that
+    just arrived -- can put somebody else's picture in a bubble, because KDE
+    Connect's own app downloads into the same folder.
+    """
+    stem = Path(name).stem
+    return next((uid for uid in waiting if uid == name or Path(uid).stem == stem), None)
+
+
 def number_key(number):
     """Phone numbers compare by their last ten digits: +1 555..., 555... match."""
     digits = re.sub(r"\D", "", number or "")

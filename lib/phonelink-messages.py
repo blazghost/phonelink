@@ -36,7 +36,7 @@ sys.path.insert(0, str(HERE))
 
 from phonelink import kdeconnect as kde  # noqa: E402
 from phonelink.sms import (FAILED, PAGE, Msg, day_label, load_contacts,  # noqa: E402
-                           number_key, pretty_number, when)
+                           match_attachment, number_key, pretty_number, when)
 from phonelink import theme, widgets  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.messages"
@@ -190,17 +190,16 @@ class Files:
     def expire(self, uid):
         if uid in self.busy:
             self.busy.discard(uid)
+            # Forget what was waiting on it too, or `get` would take the file as
+            # still on its way and never ask again when you click the picture.
+            self.waiting.pop(uid, None)
             self.pump()
         return False
 
     def on_received(self, _c, _s, _p, _i, _m, params):
         path, name = params.unpack()
-        stem = Path(name).stem
-        self.index[stem] = path
-        match = next((u for u in self.waiting
-                      if u == name or Path(u).stem == stem or name.startswith(Path(u).stem)), None)
-        if match is None and len(self.busy) == 1:
-            match = next(iter(self.busy))  # one transfer in flight: it is this one
+        self.index[Path(name).stem] = path
+        match = match_attachment(name, self.waiting)
         if match is not None:
             self.busy.discard(match)
             self.ready[match] = path

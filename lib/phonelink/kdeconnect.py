@@ -20,6 +20,8 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 SERVICE = "org.kde.kdeconnect"
+DAEMON_PATH = "/modules/kdeconnect"
+DAEMON_IFACE = "org.kde.kdeconnect.daemon"
 DEVICES = "/modules/kdeconnect/devices"
 DEVICE_IFACE = "org.kde.kdeconnect.device"
 NOTIF_PLUGIN_IFACE = "org.kde.kdeconnect.device.notifications"
@@ -68,6 +70,50 @@ def properties(path, iface, timeout=TIMEOUT):
     except GLib.Error:
         return None
     return reply.unpack()[0] if reply is not None else None
+
+
+# --------------------------------------------------------------------- health
+
+# What a health check can find. kdeconnectd has hung outright -- still on the
+# bus, still introspectable, answering nothing -- and everything phonelink does
+# went quiet with it, which is worth saying out loud rather than looking broken.
+OK, HUNG, GONE = "ok", "hung", "gone"
+
+
+def running():
+    """Is kdeconnectd on the session bus at all?"""
+    if BUS is None:
+        return False
+    try:
+        return BUS.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                             "org.freedesktop.DBus", "NameHasOwner",
+                             GLib.Variant("(s)", (SERVICE,)), None,
+                             Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
+    except GLib.Error:
+        return False
+
+
+def health(callback, timeout=2500):
+    """Report OK, HUNG or GONE to `callback`, without waiting for the answer.
+
+    selfId is cheap and goes through the daemon's own event loop, so a daemon
+    that has stopped serving fails it while introspection alone might not. The
+    call is asynchronous on purpose: a window must never block on a phone.
+    """
+    if not running():
+        callback(GONE)
+        return
+
+    def done(bus, result):
+        try:
+            bus.call_finish(result)
+            callback(OK)
+        except GLib.Error:
+            # NoReply, a timeout, or the daemon going away mid-call.
+            callback(HUNG if running() else GONE)
+
+    BUS.call(SERVICE, DAEMON_PATH, DAEMON_IFACE, "selfId", None, None,
+             Gio.DBusCallFlags.NO_AUTO_START, timeout, None, done)
 
 
 # -------------------------------------------------------------------- devices

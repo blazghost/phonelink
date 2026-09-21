@@ -204,6 +204,19 @@ service (`phonelink-toastd`) that restarts if it crashes.
 look with sample toasts, and `phonelink toasts off` gives KDE Connect its
 popups back.
 
+### When KDE Connect stops answering
+
+kdeconnectd can wedge -- still on the bus, answering nothing -- and when it
+does, toasts, replies and the Messages window all go quiet with no sign why.
+The toast service checks every minute and says so, with the button that fixes
+it:
+
+![the health card](docs/health-card.png)
+
+The card stays until KDE Connect answers again, then closes itself. Dismiss it
+and it stays away until the state changes. `phonelink kde restart` is the same
+thing from a terminal.
+
 ## Tuning
 
 ```sh
@@ -230,8 +243,21 @@ texts. `phonelink status` shows which device it is using; `PHONELINK_DEVICE`
 - `~/.config/kdeconnect.notifyrc` — silences KDE Connect's own popup for phone
   notifications only, in a marked block that `phonelink toasts off` removes
 
-Re-running `install.sh` after an update adds only the pieces you are missing,
-matched against the rules themselves rather than comment text.
+Everything phonelink writes into your Hyprland config sits between its own
+markers and carries a version:
+
+```lua
+-- phonelink:panel:begin v2
+o.window("^(org\\.omarchy\\.phonelink)$", { float = true, center = true })
+-- phonelink:panel:end
+```
+
+Re-running `install.sh` after an update adds what is missing, replaces a block
+whose version has moved on, and leaves a current one alone. Nothing outside
+those markers is touched, so your own rules and comments stay where they are --
+including a comment sitting directly above a phonelink block. An install from
+before the markers existed is upgraded in place rather than duplicated. Every
+file is backed up as `.bak.<timestamp>` before it is written.
 
 ## Working on phonelink
 

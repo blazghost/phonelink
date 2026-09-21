@@ -23,7 +23,7 @@ if [[ $want == all ]]; then
     printf '\n== shellcheck: not installed, skipped\n'
   fi
   if command -v ruff >/dev/null; then
-    run "ruff" ruff check lib tests
+    run "ruff" ruff check lib tests integration
   else
     printf '\n== ruff: not installed, skipped\n'
   fi
@@ -44,7 +44,7 @@ if [[ $want == all || $want == dbus ]]; then
     empty=$(mktemp -d)
     trap 'rm -rf "$empty"' EXIT
     run "D-Bus tests" env XDG_DATA_DIRS="$empty" PHONELINK_TEST_BUS=1 PYTHONPATH=lib \
-      dbus-run-session -- python3 -m unittest discover -s tests -p 'test_integration.py' -v
+      dbus-run-session -- python3 -m unittest discover -s tests -p 'test_dbus_*.py' -v
   else
     printf '\n== D-Bus tests: dbus-run-session not installed, skipped\n'
   fi

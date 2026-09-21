@@ -1,4 +1,5 @@
 
+-- phonelink:scrcpy:begin v1
 -- phonelink / scrcpy: a phone mirror is video. Omarchy's default translucency
 -- and backdrop blur wreck it, and the screen should not idle-lock while you're
 -- actually using the phone through it.
@@ -12,3 +13,4 @@ o.window("^([sS]crcpy)$", {
 -- The handheld mirror is a tall utility window, so float it. The virtual
 -- "desk" display is desktop-shaped and tiles like any other window.
 o.window({ class = "^([sS]crcpy)$", title = "^Phone$" }, { float = true, center = true })
+-- phonelink:scrcpy:end

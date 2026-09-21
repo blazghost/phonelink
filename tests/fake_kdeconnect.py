@@ -10,6 +10,11 @@ Run it only on a private bus (`dbus-run-session`): on the real session bus it
 would fight the actual daemon for the name.
 
     dbus-run-session -- python3 tests/fake_kdeconnect.py
+    dbus-run-session -- python3 tests/fake_kdeconnect.py --hang
+
+With --hang it keeps the name and answers introspection, but never replies to a
+daemon call -- which is how the real kdeconnectd has failed: still on the bus,
+serving nothing.
 """
 
 import sys
@@ -23,6 +28,9 @@ SERVICE = "org.kde.kdeconnect"
 DEVICES = "/modules/kdeconnect/devices"
 DEVICE_IFACE = "org.kde.kdeconnect.device"
 NOTIF_IFACE = "org.kde.kdeconnect.device.notifications.notification"
+
+DAEMON_PATH = "/modules/kdeconnect"
+DAEMON_IFACE = "org.kde.kdeconnect.daemon"
 
 DESKTOP = "aaaa0000aaaa0000aaaa0000aaaa0000"
 PHONE = "bbbb1111bbbb1111bbbb1111bbbb1111"
@@ -49,6 +57,14 @@ NOTES = {
           "internalId": "0|com.android.messaging|3||10333", "isConversation": True,
           "hasIcon": False, "iconPath": ""},
 }
+
+DAEMON_XML = f"""
+<node>
+  <interface name="{DAEMON_IFACE}">
+    <method name="selfId"><arg type="s" direction="out"/></method>
+  </interface>
+</node>
+"""
 
 DEVICE_XML = f"""
 <node>
@@ -89,13 +105,15 @@ def variant(value):
     return GLib.Variant("b", value) if isinstance(value, bool) else GLib.Variant("s", value)
 
 
-def register(bus, path, xml, props, on_call=None):
+def register(bus, path, xml, props, on_call=None, reply=None, hang=False):
     info = Gio.DBusNodeInfo.new_for_xml(xml).interfaces[0]
 
     def method(_c, _sender, _path, _iface, name, params, invocation):
         if on_call:
             on_call(name, params)
-        invocation.return_value(None)
+        if hang:
+            return  # the caller waits until its own timeout, as with a wedged daemon
+        invocation.return_value(reply)
 
     def get_prop(_c, _sender, _path, _iface, name):
         return variant(props[name]) if name in props else None
@@ -108,7 +126,7 @@ def register(bus, path, xml, props, on_call=None):
     register_object(path, info, method, get_prop, None)
 
 
-def main():
+def main(hang=False):
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
     # Never fight the real daemon: if the name is taken, this is not a private
@@ -119,6 +137,10 @@ def main():
                           Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
     if owned:
         sys.exit(f"{SERVICE} is already on this bus: run under dbus-run-session")
+
+    # The daemon object itself, which is what a health check asks.
+    register(bus, DAEMON_PATH, DAEMON_XML, {},
+             reply=GLib.Variant("(s)", ("fake-self-id",)), hang=hang)
 
     for device, props in DEVICES_DATA.items():
         register(bus, f"{DEVICES}/{device}", DEVICE_XML, props)
@@ -152,4 +174,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(hang="--hang" in sys.argv)
