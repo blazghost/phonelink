@@ -176,8 +176,11 @@ answer. Click it for Messages, right-click to answer the newest notification,
 middle-click to restart KDE Connect. Hovering says which phone, how much
 charge is left, and who is waiting.
 
-`install.sh` adds it to the bar once, beside the other status widgets. After
-that it is yours:
+`install.sh` adds it to the bar once, beside the other status widgets, and
+restarts the Omarchy shell whenever the widget's files changed — the shell's
+own plugin reload can leave the previous copy running, which is how an updated
+widget ends up still calling the command it used to have. After that it is
+yours:
 
 ```bash
 omarchy bar move phonelink.phone --section center   # somewhere else
