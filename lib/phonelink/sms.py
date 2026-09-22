@@ -5,6 +5,7 @@ hands back, so it can be tested without a phone or a window.
 """
 
 import base64
+import quopri
 import re
 from datetime import datetime
 from pathlib import Path
@@ -71,6 +72,40 @@ def pretty_number(number):
     return number or "Unknown"
 
 
+def params_of(head):
+    """The parameters on a vCard property, as {NAME: value}.
+
+    `FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE` -> {"CHARSET": "UTF-8",
+    "ENCODING": "QUOTED-PRINTABLE"}. A bare parameter like TEL;CELL keeps its
+    name with an empty value, which is all any caller here needs.
+    """
+    found = {}
+    for part in head.split(";")[1:]:
+        key, _, value = part.partition("=")
+        found[key.strip().upper()] = value.strip()
+    return found
+
+
+def decode_value(value, params):
+    """A property value as text, decoded if the card says it is encoded.
+
+    Android writes vCard 2.1, which encodes any value that is not plain ASCII
+    as quoted-printable: a name with an emoji or an accent arrives as
+    "=4A=6F=65=73". Passed through raw, that is what shows up as the contact's
+    name everywhere phonelink draws one.
+    """
+    if params.get("ENCODING", "").upper() not in ("QUOTED-PRINTABLE", "Q"):
+        return value
+    try:
+        # Only the escapes are non-ASCII-safe; the line itself is ASCII by
+        # definition of the encoding, and a card that breaks that rule should
+        # lose a character rather than the whole contact.
+        return quopri.decodestring(value.encode("utf-8", "replace")).decode(
+            params.get("CHARSET") or "utf-8", "replace")
+    except (LookupError, ValueError):
+        return value
+
+
 def cards(device_id):
     """(name, [numbers], photo bytes) per vCard KDE Connect has synced."""
     folder = Path(GLib.get_user_data_dir()) / "kpeoplevcard" / f"kdeconnect-{device_id}"
@@ -80,13 +115,29 @@ def cards(device_id):
         except OSError:
             continue
         name, tels, photo = "", [], None
-        for line in re.sub(r"\r?\n[ \t]", "", raw).splitlines():  # unfold
-            head, _, value = line.partition(":")
+        lines = re.sub(r"\r?\n[ \t]", "", raw).splitlines()  # unfold
+        index = 0
+        while index < len(lines):
+            head, sep, value = lines[index].partition(":")
+            index += 1
+            if not sep:
+                continue
+            params = params_of(head)
+            encoded = params.get("ENCODING", "").upper() in ("QUOTED-PRINTABLE", "Q")
+            # A quoted-printable value continues on the next line whenever this
+            # one ends in "=" -- a soft line break, which is not the same thing
+            # as the leading-whitespace folding unwound above. The phone here
+            # writes one whose continuation is an empty line.
+            while encoded and value.endswith("=") and index < len(lines):
+                value = value[:-1] + lines[index]
+                index += 1
             key = head.split(";")[0].upper()
             if key == "FN":
-                name = value.strip()
+                # A decoded name can carry a newline of its own (=0A), and a
+                # name is drawn on one line.
+                name = " ".join(decode_value(value, params).split())
             elif key == "TEL":
-                tels.append(value)
+                tels.append(decode_value(value, params))
             elif key == "PHOTO" and value:
                 data = value.split(",", 1)[1] if value.startswith("data:") else value
                 try:
