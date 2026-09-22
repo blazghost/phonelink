@@ -130,6 +130,97 @@ class Contacts(unittest.TestCase):
         self.assertEqual(self.load("BEGIN:VCARD\nFN:Nobody\nEND:VCARD\n"), {})
 
 
+class QuotedPrintable(unittest.TestCase):
+    """vCard 2.1, as Android actually writes it.
+
+    Any name that is not plain ASCII arrives encoded, and the two cards these
+    are built from shipped as "=4A=6F=65=73..." in the contact list until the
+    decoding was added. Both shapes are here: with the CHARSET parameter and
+    without, since the phone writes both.
+    """
+
+    def load(self, *texts):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name) / "kpeoplevcard" / "kdeconnect-dev1"
+        folder.mkdir(parents=True)
+        for i, text in enumerate(texts):
+            (folder / f"{i}.vcf").write_text(text)
+        with mock.patch.object(GLib, "get_user_data_dir", return_value=tmp.name):
+            return sms.load_contacts("dev1")
+
+    def test_an_emoji_in_a_name(self):
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:"
+                "=4A=6F=65=73=20=4E=65=69=67=68=62=6F=75=72=20=F0=9F=90=95\r\n"
+                "TEL;CELL:+13866242811\r\nEND:VCARD\r\n")
+        self.assertEqual(self.load(card)["3866242811"][0], "Joes Neighbour 🐕")
+
+    def test_without_a_charset_parameter_it_is_utf8(self):
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;ENCODING=QUOTED-PRINTABLE:=54=68=6F=6D=61=73\r\n"
+                "TEL;CELL:+14079009558\r\nEND:VCARD\r\n")
+        self.assertEqual(self.load(card)["4079009558"][0], "Thomas")
+
+    def test_a_soft_line_break_continues_the_value(self):
+        # A trailing "=" means the value goes on -- and this phone writes one
+        # whose continuation is an empty line, which used to leave the "="
+        # sitting at the end of the name.
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;ENCODING=QUOTED-PRINTABLE:=54=68=6F=6D=61=73=20=52=75=72=69=61=6E=69=\r\n"
+                "\r\n"
+                "TEL;CELL:+14079009558\r\nEND:VCARD\r\n")
+        self.assertEqual(self.load(card)["4079009558"][0], "Thomas Ruriani")
+
+    def test_a_newline_inside_a_name_becomes_a_space(self):
+        # =0A is a real newline once decoded, and a name is drawn on one line.
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;ENCODING=QUOTED-PRINTABLE:=54=68=6F=6D=61=73=0A=44=4F=44=2F=44=43=53=41\r\n"
+                "TEL;CELL:+14079009558\r\nEND:VCARD\r\n")
+        self.assertEqual(self.load(card)["4079009558"][0], "Thomas DOD/DCSA")
+
+    def test_an_encoded_number(self):
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN:Plain\r\n"
+                "TEL;ENCODING=QUOTED-PRINTABLE:=35=35=35=30=31=30=31=32=33=34\r\n"
+                "END:VCARD\r\n")
+        self.assertEqual(self.load(card)["5550101234"][0], "Plain")
+
+    def test_a_name_that_is_not_encoded_is_left_alone(self):
+        # An "=" in an unencoded value is just an equals sign.
+        card = "BEGIN:VCARD\r\nFN:A=B Ltd\r\nTEL:5550101234\r\nEND:VCARD\r\n"
+        self.assertEqual(self.load(card)["5550101234"][0], "A=B Ltd")
+
+    def test_undecodable_bytes_lose_a_character_not_the_contact(self):
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=41=FF=42\r\n"
+                "TEL:5550101234\r\nEND:VCARD\r\n")
+        name = self.load(card)["5550101234"][0]
+        self.assertTrue(name.startswith("A") and name.endswith("B"), name)
+
+    def test_an_unknown_charset_falls_back_rather_than_raising(self):
+        card = ("BEGIN:VCARD\r\nVERSION:2.1\r\n"
+                "FN;CHARSET=NOSUCHSET;ENCODING=QUOTED-PRINTABLE:=41\r\n"
+                "TEL:5550101234\r\nEND:VCARD\r\n")
+        self.assertIn("5550101234", self.load(card))
+
+
+class Parameters(unittest.TestCase):
+    def test_named_parameters(self):
+        self.assertEqual(sms.params_of("FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE"),
+                         {"CHARSET": "UTF-8", "ENCODING": "QUOTED-PRINTABLE"})
+
+    def test_a_bare_parameter_keeps_its_name(self):
+        self.assertEqual(sms.params_of("TEL;CELL"), {"CELL": ""})
+
+    def test_a_property_with_none(self):
+        self.assertEqual(sms.params_of("FN"), {})
+
+    def test_case_does_not_matter(self):
+        self.assertEqual(sms.params_of("fn;encoding=quoted-printable")["ENCODING"],
+                         "quoted-printable")
+
+
 def message(body="hi", address="5550101234", date=1_700_000_000_000, mtype=1,
             read=True, thread=7, uid=3, attachments=()):
     """A ConversationMessage as KDE Connect sends it: (isa(s)xiixixa(xsss))."""
