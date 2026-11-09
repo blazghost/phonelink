@@ -128,6 +128,12 @@ limit. So their toasts and their conversations in the reply window get an
 video is there, and you can send media as you would on the phone. It needs
 wireless adb, set up once with `phonelink pair`.
 
+**On the phone's own hotspot.** Replying needs only KDE Connect, so it works
+there as is. Open needs adb, and Android won't turn Wireless debugging on while
+it is hosting a hotspot. Plug in USB once and run `phonelink wifi`. That puts
+adb on port 5555 until the phone restarts, and Open then finds the phone at
+whatever address KDE Connect sees it on, hotspot or home Wi-Fi.
+
 ## Photos: the camera roll
 
 ![the Photos window](docs/photos.png)
