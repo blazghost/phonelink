@@ -115,7 +115,7 @@ adb_serials() { adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}';
 # Echo one usable serial. Prefers a live device; falls back to reconnecting the
 # wireless endpoint we last saw, which is the common case after a reboot.
 adb_pick() {
-  local d=() remembered
+  local d=() remembered ip
   mapfile -t d < <(adb_serials)
   if (( ${#d[@]} == 1 )); then printf '%s\n' "${d[0]}"; return 0; fi
   if (( ${#d[@]} > 1 )); then
@@ -125,6 +125,13 @@ adb_pick() {
       printf '%s\n' "${d[0]}"
     fi
     return 0
+  fi
+  # Wherever KDE Connect sees the phone -- home Wi-Fi or the phone's own hotspot
+  # -- adb in tcpip mode answers on the same address. Tried before the remembered
+  # endpoint, which is stale on any other network.
+  ip=$(kde_ip)
+  if [[ -n $ip ]] && adb connect "$ip:5555" 2>&1 | grep -qiE 'connected to'; then
+    printf '%s\n' "$ip:5555"; return 0
   fi
   if [[ -s $DEVICE_FILE ]]; then
     remembered=$(<"$DEVICE_FILE")
@@ -172,6 +179,14 @@ kde_device() {
       [[ $(kde_prop "$id" type) == "$want" ]] && { printf '%s\n' "$id"; return 0; }
     done
   done
+}
+
+# The phone's address as KDE Connect sees it, on whatever network that is.
+kde_ip() {
+  local id
+  have kdeconnect-cli || return 0
+  id=$(kde_device); [[ -n $id ]] || return 0
+  kdeconnect-cli -l 2>/dev/null | sed -n "s/.*: $id on \([0-9.]*\) via .*/\1/p"
 }
 
 require_kde() {
@@ -252,14 +267,14 @@ desk_needs_setup() {
   local pkg="${1-}" name="${PHONELINK_APP_NAME:-${1:-an app}}" choice q
   have notify-send || die "opening $name needs wireless debugging: run phonelink pair"
   choice=$(notify-send -a phonelink -i phone -A setup="Set up now" \
-    "Opening $name needs wireless debugging" \
-    "One-time setup: turn on Wireless debugging on the phone and pair it. After that, Open works for Signal, Messenger and every other app." \
+    "Opening $name needs adb" \
+    "Plug the phone in by USB and press Set up now — after that Open works over Wi-Fi or the phone's hotspot until the phone restarts. No cable? Wireless debugging works on Wi-Fi, not on the hotspot." \
     2>/dev/null) || true
   [[ $choice == setup ]] || return 0
-  have omarchy-launch-or-focus-tui || die "run in a terminal: phonelink pair"
+  have omarchy-launch-or-focus-tui || die "run in a terminal: phonelink wifi"
   printf -v q '%q' "$SELF"
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
-    "bash -c '$q pair && setsid -f $q desk $pkg >/dev/null 2>&1; printf \"\\n[any key to close]\"; read -rsn1'"
+    "bash -c '$q wifi && setsid -f $q desk $pkg >/dev/null 2>&1; printf \"\\n[any key to close]\"; read -rsn1'"
 }
 
 cmd_desk() {
@@ -308,6 +323,7 @@ cmd_wifi() {
     info "found $usb over USB — switching it to wireless"
     ip=$(adb -s "$usb" shell ip route 2>/dev/null | tr -d '\r' | awk '/wlan[0-9]/ && /src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
     [[ -n $ip ]] || ip=$(adb -s "$usb" shell ip -4 addr show wlan0 2>/dev/null | tr -d '\r' | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')
+    [[ -n $ip ]] || ip=$(kde_ip)   # on its own hotspot the phone has no wlan route
     [[ -n $ip ]] || die "could not read the phone's Wi-Fi address — is Wi-Fi on?"
     adb -s "$usb" tcpip 5555 >/dev/null
     sleep 2
@@ -317,7 +333,9 @@ cmd_wifi() {
     return 0
   fi
 
-  warn "no device over USB; falling back to wireless debugging (needs a one-time pair)"
+  warn "no device over USB; falling back to wireless debugging (needs a one-time pair).
+  On the phone's own hotspot Android won't turn Wireless debugging on: plug in
+  USB and run phonelink wifi instead (once per phone restart)."
   cmd_pair
 }
 
