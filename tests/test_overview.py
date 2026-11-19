@@ -34,8 +34,9 @@ class ParseArgs(unittest.TestCase):
     def test_a_page(self):
         self.assertEqual(overview.parse_args(["x", "--page", "photos"]), ("photos", None))
 
-    def test_remote(self):
+    def test_remote_and_settings(self):
         self.assertEqual(overview.parse_args(["x", "--page", "remote"]), ("remote", None))
+        self.assertEqual(overview.parse_args(["x", "--page", "settings"]), ("settings", None))
 
     def test_an_unknown_page_is_overview(self):
         self.assertEqual(overview.parse_args(["x", "--page", "nope"]), ("overview", None))

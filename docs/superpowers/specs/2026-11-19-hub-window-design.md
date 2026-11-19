@@ -83,6 +83,15 @@ plugin cannot work on Hyprland until KDE Connect (or xdph) changes, so PR 2
 ships the Remote tab alone and mouse sharing waits on the user's call:
 phonelink's own InputCapture + libei client, or an upstream fix.
 
+**Mouse sharing, built in phonelink (2026-11-19, the user's call):** a user
+service (`lib/phonelink-mouse.py`, `phonelink mouse on|off|status`, a switch
+on a new Settings tab) holds its own InputCapture session with an unsigned
+barrier id, reads the captured input over libei (ctypes, with xkbcommon for
+keys) and drives the phone through the Remote tab's calls. The phone never
+reports its pointer, so the way home is reckoned: pinned at its edge on
+entry, counted from there; Ctrl+Alt+Esc always gives it back, and the portal
+session dies with the process.
+
 ## PR 3 — the webcam
 
 - `phonelink webcam [front|back|off]`: scrcpy `--video-source=camera

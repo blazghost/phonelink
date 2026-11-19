@@ -199,6 +199,18 @@ else
   skip "could not start them — run: phonelink toasts on"
 fi
 
+# Mouse sharing is opt-in (`phonelink mouse on`), so it is only refreshed here
+# when it is already on: a restart is what makes an update's new code run.
+if command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user -q is-enabled phonelink-mouse.service 2>/dev/null; then
+  step "Mouse sharing"
+  if "$SRC_DIR/phonelink" mouse on >/dev/null 2>&1; then
+    note "restarted on the $(cat "${XDG_CONFIG_HOME:-$HOME/.config}/phonelink/mouse-edge" 2>/dev/null || echo left) edge"
+  else
+    skip "could not restart it — run: phonelink mouse on"
+  fi
+fi
+
 if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   step "Reloading Hyprland"
   hyprctl reload >/dev/null && note "reloaded"

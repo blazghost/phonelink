@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from phonelink import kdeconnect as kde, mpris, overview, theme, widgets  # noqa: E402
-from phonelink import messages_page, photos_page, remote_page  # noqa: E402
+from phonelink import messages_page, photos_page, remote_page, settings_page  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.app"
 PHONELINK = str(HERE.parent / "phonelink")
@@ -351,7 +351,8 @@ class Window(Adw.ApplicationWindow):
         # The other tabs are empty until first opened.
         for name, title, icon in (("messages", "Messages", "mail-unread-symbolic"),
                                   ("photos", "Photos", "image-x-generic-symbolic"),
-                                  ("remote", "Remote", "input-touchpad-symbolic")):
+                                  ("remote", "Remote", "input-touchpad-symbolic"),
+                                  ("settings", "Settings", "emblem-system-symbolic")):
             self.stack.add_titled_with_icon(Adw.Bin(), name, title, icon)
         self.stack.connect("notify::visible-child-name", lambda *_: self.on_page())
 
@@ -389,8 +390,10 @@ class Window(Adw.ApplicationWindow):
             built = messages_page.MessagesPage(messages_page.Phone())
         elif name == "photos":
             built = photos_page.PhotosPage()
-        else:
+        elif name == "remote":
             built = remote_page.RemotePage(kde.phone(), self.toast)
+        else:
+            built = settings_page.SettingsPage(self.toast)
         holder.set_child(built)
         return built
 
