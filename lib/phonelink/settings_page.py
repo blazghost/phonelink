@@ -25,7 +25,10 @@ FACINGS = ("front", "back")
 
 
 def active(unit):
-    return subprocess.run(["systemctl", "--user", "is-active", "-q", unit], check=False).returncode == 0
+    """Running, or (the webcam) waiting a moment to take the phone's camera back."""
+    state = subprocess.run(["systemctl", "--user", "is-active", unit],
+                           capture_output=True, text=True, check=False).stdout.strip()
+    return state in ("active", "activating")
 
 
 def webcam_facing():
