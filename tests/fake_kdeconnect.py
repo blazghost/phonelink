@@ -109,6 +109,28 @@ DEVICE_XML = f"""
 </node>
 """
 
+# The phone's pointer and keyboard, as remotecontrol and remotekeyboard offer them.
+CONTROL_XML = """
+<node>
+  <interface name="org.kde.kdeconnect.device.remotecontrol">
+    <method name="moveCursor"><arg type="(ii)" direction="in"/></method>
+    <method name="sendCommand"><arg type="a{sv}" direction="in"/></method>
+  </interface>
+</node>
+"""
+
+KEYBOARD_XML = """
+<node>
+  <interface name="org.kde.kdeconnect.device.remotekeyboard">
+    <property name="remoteState" type="b" access="read"/>
+    <method name="sendKeyPress">
+      <arg type="s" direction="in"/><arg type="i" direction="in"/><arg type="b" direction="in"/>
+      <arg type="b" direction="in"/><arg type="b" direction="in"/><arg type="b" direction="in"/>
+    </method>
+  </interface>
+</node>
+"""
+
 NOTIF_XML = f"""
 <node>
   <interface name="{NOTIF_IFACE}">
@@ -338,6 +360,24 @@ def main(hang=False):
 
     register(bus, f"{DEVICES}/{PHONE}/mprisremote", MPRIS_XML, {}, mpris_call,
              hang=hang, live=mpris_state, on_set=mpris_set)
+
+    # Pointer and keys: every call is printed, so a test can see exactly what
+    # the phone would have been told.
+    def control(name, params):
+        if name == "moveCursor":
+            dx, dy = params.unpack()[0]
+            print(f"move {dx} {dy}", flush=True)
+        else:
+            body = params.unpack()[0]
+            print("command " + " ".join(f"{k}={body[k]}" for k in sorted(body)), flush=True)
+
+    def keyboard(_name, params):
+        text, special, shift, ctrl, alt, _ack = params.unpack()
+        print(f"key {text!r} {special} {int(shift)}{int(ctrl)}{int(alt)}", flush=True)
+
+    register(bus, f"{DEVICES}/{PHONE}/remotecontrol", CONTROL_XML, {}, control, hang=hang)
+    register(bus, f"{DEVICES}/{PHONE}/remotekeyboard", KEYBOARD_XML, {"remoteState": True},
+             keyboard, hang=hang)
 
     for nid, props in NOTES.items():
         path = f"{DEVICES}/{PHONE}/notifications/{nid}"

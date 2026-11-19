@@ -7,6 +7,7 @@ a thumbnail out of a message, or a file on disk -- into something drawable.
 
 import base64
 import os
+import threading
 
 import gi
 
@@ -64,3 +65,16 @@ def texture_from_file(path, max_px=720):
     # Phone cameras record rotation in EXIF rather than rotating the pixels.
     pixbuf = pixbuf.apply_embedded_orientation() or pixbuf
     return Gdk.Texture.new_for_pixbuf(pixbuf), pixbuf.get_width(), pixbuf.get_height()
+
+
+def in_background(work, on_error=None):
+    """Run a phone call off the main loop; a GLib.Error comes back on it, worded for people."""
+    from . import kdeconnect as kde
+
+    def go():
+        try:
+            work()
+        except GLib.Error as exc:
+            if on_error:
+                GLib.idle_add(on_error, kde.friendly_error(exc.message))
+    threading.Thread(target=go, daemon=True).start()

@@ -52,7 +52,8 @@ plain bash and works on any Linux with the four tools installed.
 `SUPER + SHIFT + L` opens the Phone section of the Omarchy menu. From a shell:
 
 ```
-phonelink app               the window: Overview, Messages and Photos
+phonelink app               the window: Overview, Messages, Photos and Remote
+phonelink remote            a touchpad and keyboard for the phone
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -81,7 +82,7 @@ screen while the phone stays usable in your hand.
 ## The window
 
 `phonelink app`, or *Phone window* in the Phone menu, is one window with
-**Overview**, **Messages** and **Photos** tabs. Overview is the phone at a
+**Overview**, **Messages**, **Photos** and **Remote** tabs. Overview is the phone at a
 glance: its name, battery and signal, tiles for Ring, Send files, Clipboard,
 Mirror, App window and LocalSend, a player card while something is playing
 (art, seek, volume), and the phone's notifications with a clear button each
@@ -90,6 +91,14 @@ on their tab; a second launch reuses the open window.
 
 Messages and Photos are built the first time their tab is opened, so opening
 the window never mounts the phone's storage or asks it for its texts.
+
+**Remote** (`phonelink remote`) is a touchpad and keyboard for the phone: drag
+to move its pointer, tap to click, right-click and scroll, and type into the
+keyboard field to type on the phone key by key. It goes through KDE Connect's
+remotecontrol and remotekeyboard plugins, which need two things on the phone:
+KDE Connect's *Remote input* accessibility permission for the pointer, and
+*KDE Connect Remote Keyboard* picked as the keyboard for typing (the tab says
+whether it is). Pointer speed is `SPEED` in `lib/phonelink/remote_page.py`.
 
 ## Messages: texts with photos and video
 
