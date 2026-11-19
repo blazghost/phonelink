@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from phonelink import kdeconnect as kde, mpris, overview, theme, widgets  # noqa: E402
-from phonelink import messages_page, photos_page  # noqa: E402
+from phonelink import messages_page, photos_page, remote_page  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.app"
 PHONELINK = str(HERE.parent / "phonelink")
@@ -83,17 +83,6 @@ def extra_css(p):
 .note-title {{ font-weight: 600; }}
 .note-text {{ color: {p['muted']}; }}
 """
-
-
-def run_bg(work, on_error=None):
-    """A phone call off the main loop. Errors come back on it, worded for people."""
-    def go():
-        try:
-            work()
-        except GLib.Error as exc:
-            if on_error:
-                GLib.idle_add(on_error, kde.friendly_error(exc.message))
-    threading.Thread(target=go, daemon=True).start()
 
 
 # ----------------------------------------------------------------- overview
@@ -205,7 +194,7 @@ class OverviewPage(Adw.Bin):
 
     def media(self, action):
         if did := self.snap.get("id"):
-            run_bg(lambda: mpris.send(did, action), self.toast)
+            widgets.in_background(lambda: mpris.send(did, action), self.toast)
 
     def on_seek(self, _scale, _scroll, value):
         # A drag fires this for every pixel; only where it stops goes to the phone.
@@ -217,7 +206,7 @@ class OverviewPage(Adw.Bin):
     def send_seek(self, value):
         self._seek_id = 0
         if did := self.snap.get("id"):
-            run_bg(lambda: mpris.seek_to(did, value), self.toast)
+            widgets.in_background(lambda: mpris.seek_to(did, value), self.toast)
         return False
 
     def on_volume(self, _scale, _scroll, value):
@@ -229,7 +218,7 @@ class OverviewPage(Adw.Bin):
     def send_volume(self, value):
         self._vol_id = 0
         if did := self.snap.get("id"):
-            run_bg(lambda: mpris.set_volume(did, value), self.toast)
+            widgets.in_background(lambda: mpris.set_volume(did, value), self.toast)
         return False
 
     # -- notifications
@@ -272,7 +261,7 @@ class OverviewPage(Adw.Bin):
 
     def dismiss(self, notes):
         paths = [n["path"] for n in notes if n["dismissable"]]
-        run_bg(lambda: [kde.dismiss(p) for p in paths])
+        widgets.in_background(lambda: [kde.dismiss(p) for p in paths])
         self.snap["notes"] = [n for n in self.snap.get("notes", []) if n["path"] not in paths]
         self.draw_notes()
 
@@ -359,9 +348,11 @@ class Window(Adw.ApplicationWindow):
         self.overview = OverviewPage(self.toast)
         self.stack.add_titled_with_icon(self.overview, "overview", "Overview",
                                         "view-grid-symbolic")
-        # Messages and Photos are empty until first opened.
-        self.stack.add_titled_with_icon(Adw.Bin(), "messages", "Messages", "mail-unread-symbolic")
-        self.stack.add_titled_with_icon(Adw.Bin(), "photos", "Photos", "image-x-generic-symbolic")
+        # The other tabs are empty until first opened.
+        for name, title, icon in (("messages", "Messages", "mail-unread-symbolic"),
+                                  ("photos", "Photos", "image-x-generic-symbolic"),
+                                  ("remote", "Remote", "input-touchpad-symbolic")):
+            self.stack.add_titled_with_icon(Adw.Bin(), name, title, icon)
         self.stack.connect("notify::visible-child-name", lambda *_: self.on_page())
 
         switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
@@ -394,8 +385,12 @@ class Window(Adw.ApplicationWindow):
         holder = self.stack.get_child_by_name(name)
         if name == "overview" or holder.get_child():
             return holder if name == "overview" else holder.get_child()
-        built = (messages_page.MessagesPage(messages_page.Phone()) if name == "messages"
-                 else photos_page.PhotosPage())
+        if name == "messages":
+            built = messages_page.MessagesPage(messages_page.Phone())
+        elif name == "photos":
+            built = photos_page.PhotosPage()
+        else:
+            built = remote_page.RemotePage(kde.phone(), self.toast)
         holder.set_child(built)
         return built
 
@@ -430,7 +425,8 @@ class App(Adw.Application):
             else Adw.ColorScheme.FORCE_DARK)
         css = Gtk.CssProvider()
         css.load_from_string(theme.build_css(pal) + messages_page.extra_css(pal)
-                             + photos_page.extra_css(pal) + extra_css(pal))
+                             + photos_page.extra_css(pal) + remote_page.extra_css(pal)
+                             + extra_css(pal))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 

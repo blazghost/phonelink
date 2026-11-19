@@ -614,7 +614,8 @@ cmd_help() {
   cat <<'EOS'
 phonelink — Android on your Linux desktop
 
-  app               the phonelink window: Overview, Messages and Photos
+  app               the phonelink window: Overview, Messages, Photos and Remote
+  remote            a touchpad and keyboard for the phone (the window's Remote tab)
   status            what is connected right now, and what is missing
   mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
   desk [package]    run one app on its own virtual display; picks with fzf if omitted
@@ -777,6 +778,7 @@ main() {
     toastd)        shift; cmd_toastd "$@" ;;
     app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
+    remote|touchpad) shift; cmd_remote "$@" ;;
     text|new)      shift; cmd_text "$@" ;;
     photos|roll)   shift; cmd_photos "$@" ;;
     media|music)   shift; cmd_media "$@" ;;
@@ -810,6 +812,10 @@ cmd_app() {
 # The phone's SMS/MMS conversations with their photos and video: the window's
 # Messages tab, over KDE Connect's conversations interface.
 cmd_messages() { cmd_app --page messages; }
+
+# A touchpad and keyboard for the phone: the window's Remote tab, over KDE
+# Connect's remotecontrol and remotekeyboard plugins.
+cmd_remote() { cmd_app --page remote; }
 
 # Start a text to somebody there is no thread with yet. With a message it goes
 # out from the terminal (lib/phonelink-text.py, no GUI needed, so it can sit on

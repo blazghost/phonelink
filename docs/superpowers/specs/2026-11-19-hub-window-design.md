@@ -73,6 +73,16 @@ and sets its edge; Caelestia's own ~500-line libei capture is not repeated.
 - Phone side, said in the UI: KDE Connect's *Remote input* accessibility
   permission; the KDE Connect keyboard selected for typing.
 
+**Found while building PR 2 (2026-11-19):** KDE Connect 26.08's
+`kdeconnect_shareinputdevices` creates its InputCapture session through
+xdg-desktop-portal-hyprland 1.4.1, but sends `barrier_id` as `i` where the
+portal spec says `u`; xdph then reports the barrier failed
+(`failed_barriers = [0]`), so the pointer is never captured at the edge. A
+probe setting the same barrier with a `u` id is accepted (`failed = []`). The
+plugin cannot work on Hyprland until KDE Connect (or xdph) changes, so PR 2
+ships the Remote tab alone and mouse sharing waits on the user's call:
+phonelink's own InputCapture + libei client, or an upstream fix.
+
 ## PR 3 — the webcam
 
 - `phonelink webcam [front|back|off]`: scrcpy `--video-source=camera
