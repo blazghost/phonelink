@@ -827,7 +827,9 @@ webcam_device() {
 
 webcam_facing() { local f; f=$(cat "$WEBCAM_FACING_FILE" 2>/dev/null || true); echo "${f:-front}"; }
 
-webcam_active() { systemctl --user -q is-active "$WEBCAM_UNIT.service" 2>/dev/null; }
+# "activating" counts as on: that is the unit waiting to take the camera back.
+webcam_state() { systemctl --user is-active "$WEBCAM_UNIT.service" 2>/dev/null || true; }
+webcam_active() { [[ $(webcam_state) == active || $(webcam_state) == activating ]]; }
 
 webcam_on() {
   local facing="$1" dev serial extra=()
@@ -843,7 +845,17 @@ webcam_on() {
   systemctl --user reset-failed "$WEBCAM_UNIT.service" 2>/dev/null || true
   # 720p30: plenty for a call, light on Wi-Fi. (scrcpy refuses --max-size with
   # --camera-size, so the phone is asked for the size itself.)
+  #
+  # Android hands the camera to anything that outranks the shell -- and on a
+  # Samsung that is nearly everything: face unlock opens one each time the
+  # phone wakes, Smart Stay opens the front one every twenty seconds, and the
+  # Camera app holds one while it is open. scrcpy exits when it loses the
+  # camera, so the unit starts it again a few seconds later and the webcam
+  # comes back by itself. Two minutes of failing in a row (the phone gone,
+  # say) and it gives up.
   systemd-run --user --quiet --collect --unit="$WEBCAM_UNIT" \
+    -p Restart=on-failure -p RestartSec=3 \
+    -p StartLimitIntervalSec=150 -p StartLimitBurst=40 \
     scrcpy -s "$serial" --video-source=camera --camera-facing="$facing" \
       --camera-size=1280x720 --camera-fps=30 \
       --no-audio --no-window --v4l2-sink="$dev" "${extra[@]}"
@@ -863,7 +875,12 @@ cmd_webcam() {
     status)
       local dev
       dev=$(webcam_device || echo "none -- run sudo ./setup.sh once")
-      printf '  %-20s %s\n' "phone webcam" "$(webcam_active && echo "on ($(webcam_facing) camera)" || echo off)"
+      case $(webcam_state) in
+        active)     printf '  %-20s %s\n' "phone webcam" "on ($(webcam_facing) camera)" ;;
+        activating) printf '  %-20s %s\n' "phone webcam" \
+                      "waiting for the camera -- something on the phone has it (Camera app, face unlock, Smart Stay)" ;;
+        *)          printf '  %-20s %s\n' "phone webcam" off ;;
+      esac
       printf '  %-20s %s\n' "device" "$dev" ;;
     *) die "usage: phonelink webcam front|back|on|off|toggle|status" ;;
   esac

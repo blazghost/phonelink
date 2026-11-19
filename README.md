@@ -130,6 +130,14 @@ scrcpy's camera mode (Android 12+) writing 720p at 30 fps into a
 v4l2loopback device, over the same adb connection as `phonelink mirror`, so
 `phonelink wifi` first if the cable is out.
 
+Android gives the camera to anything that outranks a shell process, and on a
+Samsung that includes face unlock (each time the phone wakes), Smart Stay
+(the front camera, every twenty seconds) and the Camera app. When one of them
+takes it, the webcam drops and comes back by itself a few seconds later;
+`phonelink webcam status` says "waiting for the camera" meanwhile. For a long
+call on the front camera, turn Smart Stay off (Settings → Advanced features →
+Motions and gestures → Keep screen on while viewing).
+
 The virtual device is the one root-only part: `sudo ./setup.sh` installs
 `v4l2loopback-dkms` and loads it at every boot. If the picture comes out
 sideways or mirrored, pass scrcpy a fix with `PHONELINK_WEBCAM_ARGS`, e.g.
