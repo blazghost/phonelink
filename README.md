@@ -55,6 +55,7 @@ plain bash and works on any Linux with the four tools installed.
 phonelink app               the window: Overview, Messages, Photos and Remote
 phonelink remote            a touchpad and keyboard for the phone
 phonelink mouse on [edge]   share this mouse and keyboard with the phone
+phonelink webcam front|back the phone's camera as a webcam; off to stop
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -119,6 +120,20 @@ pointer is pinned against the phone's edge as it arrives, and phonelink counts
 how far it has moved since. If it comes home too early or too late, set
 `PHONELINK_SHARE_SPAN` (the phone's width in pixels, 1080 by default) with
 `systemctl --user edit phonelink-mouse`.
+
+## Webcam: the phone's camera
+
+`phonelink webcam front` (or `back`, the Webcam tile, or the Settings tab)
+makes the phone's camera a webcam called **Phone camera** that Meet, Zoom, OBS
+or a browser can pick like any other. `phonelink webcam off` stops it. It is
+scrcpy's camera mode (Android 12+) writing 720p at 30 fps into a
+v4l2loopback device, over the same adb connection as `phonelink mirror`, so
+`phonelink wifi` first if the cable is out.
+
+The virtual device is the one root-only part: `sudo ./setup.sh` installs
+`v4l2loopback-dkms` and loads it at every boot. If the picture comes out
+sideways or mirrored, pass scrcpy a fix with `PHONELINK_WEBCAM_ARGS`, e.g.
+`PHONELINK_WEBCAM_ARGS="--orientation=90" phonelink webcam front`.
 
 ## Messages: texts with photos and video
 

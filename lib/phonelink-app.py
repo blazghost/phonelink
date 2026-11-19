@@ -47,6 +47,7 @@ TILES = (
     ("mirror", "Mirror", "video-display-symbolic"),
     ("desk", "App window", "view-app-grid-symbolic"),
     ("drop", "LocalSend", "network-wireless-symbolic"),
+    ("webcam toggle", "Webcam", "camera-web-symbolic"),
 )
 
 
@@ -65,7 +66,7 @@ def extra_css(p):
 .chip.lead {{ background: alpha({p['accent']}, 0.85); color: {on_accent}; font-weight: 600; }}
 .chip.bad {{ background: alpha({p['red']}, 0.85); color: {theme.ink_on(p, p['red'])}; }}
 .action-tile {{ background: {p['lighter_background']}; border-radius: 18px;
-         min-width: 96px; min-height: 84px; padding: 10px 6px; }}
+         min-width: 84px; min-height: 84px; padding: 10px 6px; }}
 .action-tile:hover {{ background: alpha({p['accent']}, 0.16); }}
 .action-tile label {{ font-size: 9pt; font-weight: 600; }}
 .action-tile image {{ color: {p['accent']}; }}
@@ -124,8 +125,8 @@ class OverviewPage(Adw.Bin):
 
     def build_tiles(self):
         grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
-                           column_spacing=12, row_spacing=12, min_children_per_line=3,
-                           max_children_per_line=6)
+                           column_spacing=12, row_spacing=12, min_children_per_line=7,
+                           max_children_per_line=7)
         for command, text, icon in TILES:
             inner = Gtk.Box(orientation=VERTICAL, spacing=8, valign=Gtk.Align.CENTER)
             inner.append(Gtk.Image(icon_name=icon, pixel_size=24))
@@ -138,7 +139,7 @@ class OverviewPage(Adw.Bin):
 
     def run(self, command):
         try:
-            subprocess.Popen([PHONELINK, command], stdin=subprocess.DEVNULL,
+            subprocess.Popen([PHONELINK, *command.split()], stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, start_new_session=True)
         except OSError as exc:
             self.toast(f"Couldn't run phonelink {command}: {exc.strerror}")
