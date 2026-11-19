@@ -285,6 +285,7 @@ def read_note(path):
         "icon": icon_path(props),
         "package": package_of(props),
         "repliable": bool(props.get("replyId")),
+        "dismissable": bool(props.get("dismissable", True)),
         # A notification re-synced when the phone reconnects is silent, and
         # KDE Connect never pops one of those either.
         "silent": bool(props.get("silent")),

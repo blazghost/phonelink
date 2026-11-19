@@ -614,6 +614,7 @@ cmd_help() {
   cat <<'EOS'
 phonelink — Android on your Linux desktop
 
+  app               the phonelink window: Overview, Messages and Photos
   status            what is connected right now, and what is missing
   mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
   desk [package]    run one app on its own virtual display; picks with fzf if omitted
@@ -774,6 +775,7 @@ main() {
     reply|r)       shift; cmd_reply "$@" ;;
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
+    app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
     text|new)      shift; cmd_text "$@" ;;
     photos|roll)   shift; cmd_photos "$@" ;;
@@ -797,13 +799,17 @@ cmd_bar() {
   exec python3 "$SRC_DIR/lib/phonelink-bar.py" "$@"
 }
 
-# The phone's SMS/MMS conversations with their photos and video, in a GTK window
-# (lib/phonelink-messages.py) over KDE Connect's conversations interface.
-cmd_messages() {
-  gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
-    || die "the Messages window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
-  exec python3 "$SRC_DIR/lib/phonelink-messages.py" "$@"
+# The one window (lib/phonelink-app.py): Overview, Messages and Photos as tabs.
+# A second launch hands its arguments to the open window.
+cmd_app() {
+  gui_available && [[ -f $SRC_DIR/lib/phonelink-app.py ]] \
+    || die "the phonelink window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
+  exec python3 "$SRC_DIR/lib/phonelink-app.py" "$@"
 }
+
+# The phone's SMS/MMS conversations with their photos and video: the window's
+# Messages tab, over KDE Connect's conversations interface.
+cmd_messages() { cmd_app --page messages; }
 
 # Start a text to somebody there is no thread with yet. With a message it goes
 # out from the terminal (lib/phonelink-text.py, no GUI needed, so it can sit on
@@ -815,9 +821,7 @@ cmd_text() {
     exec python3 "$SRC_DIR/lib/phonelink-text.py" "$@"
   fi
   [[ ${1-} == --list ]] && exec python3 "$SRC_DIR/lib/phonelink-text.py" "$@"
-  gui_available && [[ -f $SRC_DIR/lib/phonelink-messages.py ]] \
-    || die "with no message to send this opens the Messages window, which needs GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
-  exec python3 "$SRC_DIR/lib/phonelink-messages.py" --new "$@"
+  cmd_app --new "$@"
 }
 
 # Play, pause and skip what the phone is playing (lib/phonelink-media.py), over
@@ -828,14 +832,12 @@ cmd_media() {
   exec python3 "$SRC_DIR/lib/phonelink-media.py" "$@"
 }
 
-# The phone's camera roll as a grid (lib/phonelink-photos.py), over the storage
+# The phone's camera roll as a grid: the window's Photos tab, over the storage
 # KDE Connect exports with its sftp plugin. sshfs does the mounting, so it is
 # the one package this needs beyond the GUI ones.
 cmd_photos() {
-  gui_available && [[ -f $SRC_DIR/lib/phonelink-photos.py ]] \
-    || die "the Photos window needs a desktop session with GTK 4 and libadwaita (python-gobject gtk4 libadwaita)"
-  have sshfs || die "the Photos window mounts the phone with sshfs: sudo pacman -S sshfs"
-  exec python3 "$SRC_DIR/lib/phonelink-photos.py" "$@"
+  have sshfs || die "the Photos tab mounts the phone with sshfs: sudo pacman -S sshfs"
+  cmd_app --page photos
 }
 
 main "$@"

@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""phonelink photos -- the phone's camera roll, Phone Link style.
+"""The Photos tab: the phone's camera roll, Phone Link style.
 
 A GTK 4 / libadwaita grid of the last couple of hundred camera photos,
 screenshots and videos, over the storage KDE Connect exports with its sftp
@@ -17,11 +16,10 @@ Nothing here downloads a video to draw it: those tiles show a play badge, and
 fetch only when you open, save or drag one.
 """
 
-import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 
 import gi
 
@@ -29,12 +27,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-
-from phonelink import kdeconnect as kde, photos, theme, widgets  # noqa: E402
-
-APP_ID = "org.omarchy.phonelink.photos"
+from . import kdeconnect as kde, photos, widgets  # noqa: E402
 VERTICAL = Gtk.Orientation.VERTICAL
 
 TILE = 168          # a tile's side, in pixels
@@ -91,7 +84,13 @@ class Roll:
             if not point:
                 return GLib.idle_add(on_done, [], device["name"], err or "no-mount")
             roots = photos.directories(device["id"]) or {point: ""}
-            shots = photos.scan(photos.roll_dirs(*roots), limit=LIMIT)
+            # A fresh sshfs mount lists nothing for its first few seconds, which
+            # read as an empty camera roll on every first open.
+            for _ in range(8):
+                shots = photos.scan(photos.roll_dirs(*roots), limit=LIMIT)
+                if shots:
+                    break
+                time.sleep(1)
             return GLib.idle_add(on_done, shots, device["name"], "")
         threading.Thread(target=work, daemon=True).start()
 
@@ -192,16 +191,15 @@ class Tile(Gtk.FlowBoxChild):
         return Gdk.ContentProvider.new_for_value(files)
 
 
-class PhotosWindow(Adw.ApplicationWindow):
+class PhotosPage(Adw.Bin):
 
-    def __init__(self, app):
-        super().__init__(application=app, title="Photos",
-                         default_width=980, default_height=720)
+    def __init__(self):
+        super().__init__()
         self.roll = Roll()
         self.tiles = []
 
         self.toasts = Adw.ToastOverlay()
-        self.head = Adw.HeaderBar()
+        self.head = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
         self.subtitle = Adw.WindowTitle(title="Photos", subtitle="Looking for the phone…")
         self.head.set_title_widget(self.subtitle)
 
@@ -231,7 +229,7 @@ class PhotosWindow(Adw.ApplicationWindow):
         body.append(self.head)
         body.append(self.stack)
         self.toasts.set_child(body)
-        self.set_content(self.toasts)
+        self.set_child(self.toasts)
 
         self.load()
 
@@ -338,32 +336,3 @@ class PhotosWindow(Adw.ApplicationWindow):
             return GLib.idle_add(self.toast, f"Saved to {dest.parent.name}/{dest.name}")
         self.toast("Saving it from the phone…")
         self.roll.pool.submit(work)
-
-
-class App(Adw.Application):
-
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
-        self.win = None
-
-    def do_startup(self):
-        Adw.Application.do_startup(self)
-        pal = theme.load_palette()
-        Adw.StyleManager.get_default().set_color_scheme(
-            Adw.ColorScheme.FORCE_LIGHT if pal.get("mode") == "light"
-            else Adw.ColorScheme.FORCE_DARK)
-        css = Gtk.CssProvider()
-        css.load_from_string(theme.build_css(pal) + extra_css(pal))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-    def do_activate(self):
-        if self.win:  # opened again while open: bring it forward
-            self.win.present()
-            return
-        self.win = PhotosWindow(self)
-        self.win.present()
-
-
-if __name__ == "__main__":
-    sys.exit(App().run([sys.argv[0]]))

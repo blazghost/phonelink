@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
-"""phonelink messages -- the phone's SMS/MMS conversations, Phone Link style.
+"""The Messages tab: the phone's SMS/MMS conversations, Phone Link style.
 
-A GTK 4 / libadwaita window over KDE Connect's conversations interface: the
+A GTK 4 / libadwaita page over KDE Connect's conversations interface: the
 conversation list on the left, a thread on the right with received and sent
 bubbles, and MMS pictures and videos inline. A picture shows at once from the
 small thumbnail the phone sends with each message and is swapped for the full
@@ -20,7 +19,6 @@ its Contacts plugin has permission; until then threads show numbers.
 
 import mimetypes
 import shutil
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -31,16 +29,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+from . import kdeconnect as kde, widgets  # noqa: E402
+from .sms import (FAILED, PAGE, Msg, day_label, load_contacts,  # noqa: E402
+                  load_people, match_attachment, match_people, number_key,
+                  pretty_number, resolve_recipient, when)
 
-from phonelink import kdeconnect as kde  # noqa: E402
-from phonelink.sms import (FAILED, PAGE, Msg, day_label, load_contacts,  # noqa: E402
-                           load_people, match_attachment, match_people, number_key,
-                           pretty_number, resolve_recipient, when)
-from phonelink import theme, widgets  # noqa: E402
-
-APP_ID = "org.omarchy.phonelink.messages"
 SERVICE = "org.kde.kdeconnect"
 DEVICES = "/modules/kdeconnect/devices"
 DEVICE_IFACE = "org.kde.kdeconnect.device"
@@ -260,7 +253,8 @@ class ThreadView(Adw.Bin):
         # field instead.
         self.composing = False
 
-        self.header = Adw.HeaderBar(show_title=False)
+        self.header = Adw.HeaderBar(show_title=False, show_start_title_buttons=False,
+                                    show_end_title_buttons=False)
         self.who = Gtk.Box(spacing=10, valign=Gtk.Align.CENTER, margin_start=4)
         self.header.pack_start(self.who)
 
@@ -601,7 +595,7 @@ class ThreadView(Adw.Bin):
         filters = Gio.ListStore.new(Gtk.FileFilter)
         filters.append(media)
         dialog = Gtk.FileDialog(title="Attach photos or videos", modal=True, filters=filters)
-        dialog.open_multiple(self.win, None, self.on_chosen)
+        dialog.open_multiple(self.get_root(), None, self.on_chosen)
 
     def on_chosen(self, dialog, result):
         try:
@@ -725,11 +719,10 @@ class ThreadView(Adw.Bin):
 
 # ------------------------------------------------------------------- window
 
-class MessagesWindow(Adw.ApplicationWindow):
+class MessagesPage(Adw.Bin):
 
-    def __init__(self, app, phone, new_to=None):
-        super().__init__(application=app, title="Messages")
-        self.set_default_size(1000, 700)
+    def __init__(self, phone, new_to=None):
+        super().__init__()
         self.phone = phone
         # `phonelink text [who]` opens the window straight onto a blank text.
         self.new_to = new_to
@@ -744,10 +737,7 @@ class MessagesWindow(Adw.ApplicationWindow):
                                               "the same network. `phonelink status` will say "
                                               "more; `phonelink kde restart` if it is stuck.")
             page.add_css_class("compact")
-            view = Adw.ToolbarView()
-            view.add_top_bar(Adw.HeaderBar())
-            view.set_content(page)
-            self.set_content(view)
+            self.set_child(page)
             return
 
         self.contacts = load_contacts(phone.id)
@@ -771,7 +761,7 @@ class MessagesWindow(Adw.ApplicationWindow):
         side_body.append(self.search)
         side_body.append(side_scroll)
         side = Adw.ToolbarView()
-        side_header = Adw.HeaderBar()
+        side_header = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
         side_header.set_title_widget(Adw.WindowTitle(title="Messages", subtitle=phone.name))
         new_btn = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="New message",
                              focus_on_click=False)
@@ -783,11 +773,7 @@ class MessagesWindow(Adw.ApplicationWindow):
         split = Adw.NavigationSplitView(min_sidebar_width=300, max_sidebar_width=360)
         split.set_sidebar(Adw.NavigationPage(child=side, title="Messages"))
         split.set_content(Adw.NavigationPage(child=self.view, title="Conversation"))
-        self.set_content(split)
-
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
-        self.add_controller(keys)
+        self.set_child(split)
 
         for member in ("conversationCreated", "conversationUpdated"):
             phone.subscribe(member, self.on_message)
@@ -983,92 +969,3 @@ class MessagesWindow(Adw.ApplicationWindow):
     def on_row_selected(self, _box, row):
         if row is not None and row.tid != self.view.tid:
             self.view.show_thread(row.tid)
-
-
-class App(Adw.Application):
-
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
-        self.win = None
-        self.new_to = None
-
-    def do_startup(self):
-        Adw.Application.do_startup(self)
-        # `phonelink text` on a window that is already open arrives here: the
-        # second process cannot hand over its arguments, but it can activate
-        # an action on this one, which is what raises the composer.
-        action = Gio.SimpleAction.new("new-message", GLib.VariantType.new("s"))
-        action.connect("activate", self.on_new_message)
-        self.add_action(action)
-        pal = theme.load_palette()
-        Adw.StyleManager.get_default().set_color_scheme(
-            Adw.ColorScheme.FORCE_LIGHT if pal.get("mode") == "light"
-            else Adw.ColorScheme.FORCE_DARK)
-        css = Gtk.CssProvider()
-        css.load_from_string(theme.build_css(pal) + extra_css(pal))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-    def on_new_message(self, _action, param):
-        if self.win:
-            self.win.present()
-            if self.win.phone.id:
-                self.win.start_new(param.get_string())
-
-    def do_activate(self):
-        if self.win:  # opened again while open: bring it forward
-            self.win.present()
-            return
-        self.win = MessagesWindow(self, Phone(), self.new_to)
-        self.win.present()
-
-
-def new_to(argv=None):
-    """`--new [who]` from `phonelink text`, or None for the ordinary window.
-
-    GTK's own argument handling is deliberately not used -- the application is
-    run with the program name alone, so that a second `phonelink messages`
-    raises the open window rather than starting another.
-    """
-    argv = sys.argv if argv is None else argv
-    if "--new" not in argv:
-        return None
-    rest = [a for a in argv[argv.index("--new") + 1:] if not a.startswith("-")]
-    return " ".join(rest).strip()
-
-
-def tell_the_open_window(who):
-    """Hand a recipient to a Messages window that is already open, or say no.
-
-    A second process cannot pass arguments to the first -- GTK raises the open
-    window and drops them -- so this asks the running one to open its composer
-    over the interface every GApplication exports.
-    """
-    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-    try:
-        owned = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
-                              "org.freedesktop.DBus", "NameHasOwner",
-                              GLib.Variant("(s)", (APP_ID,)), None,
-                              Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
-        if not owned:
-            return False
-        bus.call_sync(APP_ID, "/" + APP_ID.replace(".", "/"),
-                      "org.freedesktop.Application", "ActivateAction",
-                      GLib.Variant("(sava{sv})",
-                                   ("new-message", [GLib.Variant("s", who)], {})),
-                      None, Gio.DBusCallFlags.NONE, 5000, None)
-        return True
-    except GLib.Error:
-        return False  # not answering: open a window of our own instead
-
-
-def main(argv):
-    app = App()
-    app.new_to = new_to(argv)
-    if app.new_to is not None and tell_the_open_window(app.new_to):
-        return 0
-    return app.run([argv[0]])
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))

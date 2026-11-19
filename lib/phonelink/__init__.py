@@ -1,6 +1,6 @@
 """Shared code for phonelink's windows and its D-Bus helper.
 
-The three GTK programs -- the reply window, the toast service and the Messages
+The GTK programs -- the reply window, the toast service and the phonelink
 window -- used to load each other by file path to share a palette, an avatar or
 a D-Bus call. They import this package instead:
 
@@ -11,6 +11,8 @@ a D-Bus call. They import this package instead:
     helper      the same, as a subprocess, so a window can be driven by a stub
     sms         phone numbers, contacts, dates and the SMS/MMS message
     mpris       what the phone is playing, and the buttons for it
+    overview    the window's Overview, read off the bus without GTK
+    messages_page, photos_page   the window's Messages and Photos tabs
 
 Each entry script puts `lib/` on sys.path and imports from here; nothing in the
 package imports an entry script back.

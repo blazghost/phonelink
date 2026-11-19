@@ -128,9 +128,7 @@ block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-reply.lua.snippet"
 block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-panel.lua.snippet" \
   "phonelink reply panel (float)" 'o.window("^(org\\.omarchy\\.phonelink)$"'
 block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-messages.lua.snippet" \
-  "Messages window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.messages)$"'
-block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-photos.lua.snippet" \
-  "Photos window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.photos)$"'
+  "phonelink window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.messages)$"'
 
 step "Bar widgets"
 # A plugin directory of its own under ~/.config/omarchy/plugins, the way every

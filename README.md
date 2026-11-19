@@ -52,6 +52,7 @@ plain bash and works on any Linux with the four tools installed.
 `SUPER + SHIFT + L` opens the Phone section of the Omarchy menu. From a shell:
 
 ```
+phonelink app               the window: Overview, Messages and Photos
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -76,6 +77,19 @@ phonelink kde restart       unstick KDE Connect if it stops answering
 `desk` is the one worth knowing about: it gives an app its own desktop-shaped
 display via scrcpy's virtual display, so the app is a normal window on your
 screen while the phone stays usable in your hand.
+
+## The window
+
+`phonelink app`, or *Phone window* in the Phone menu, is one window with
+**Overview**, **Messages** and **Photos** tabs. Overview is the phone at a
+glance: its name, battery and signal, tiles for Ring, Send files, Clipboard,
+Mirror, App window and LocalSend, a player card while something is playing
+(art, seek, volume), and the phone's notifications with a clear button each
+and Clear all. `phonelink messages`, `photos` and `text` open the same window
+on their tab; a second launch reuses the open window.
+
+Messages and Photos are built the first time their tab is opened, so opening
+the window never mounts the phone's storage or asks it for its texts.
 
 ## Messages: texts with photos and video
 
@@ -426,8 +440,7 @@ file is backed up as `.bak.<timestamp>` before it is written.
 phonelink                   the command itself: bash over KDE Connect, scrcpy, adb and LocalSend
 lib/phonelink-reply-gtk.py  the reply window
 lib/phonelink-toastd.py     the notification toasts (a systemd user service)
-lib/phonelink-messages.py   the Messages window
-lib/phonelink-photos.py     the Photos window: the camera roll as a grid
+lib/phonelink-app.py        the window: Overview, Messages and Photos as tabs
 lib/phonelink-bar.py        what the phone is doing, as JSON, for the bar widget
 lib/phonelink-media.py      what the phone is playing, and the buttons for it
 lib/phonelink-text.py       a text to somebody there is no thread with yet
