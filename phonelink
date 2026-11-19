@@ -618,6 +618,7 @@ phonelink — Android on your Linux desktop
   remote            a touchpad and keyboard for the phone (the window's Remote tab)
   mouse on [edge]   share this mouse and keyboard: past the edge, they drive the phone
   mouse off|status  stop sharing, or say whether it is on and at which edge
+  webcam front|back the phone's camera as a webcam ("Phone camera"); off, status
   status            what is connected right now, and what is missing
   mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
   desk [package]    run one app on its own virtual display; picks with fzf if omitted
@@ -805,6 +806,69 @@ cmd_mouse() {
   esac
 }
 
+# ------------------------------------------------------------ phone webcam
+#
+# The phone's camera as a webcam anything can pick: scrcpy's camera mode
+# writing into a v4l2loopback device labelled "Phone camera" (setup.sh makes
+# it), run as a transient user service so it outlives the command and stops
+# with `phonelink webcam off`.
+
+WEBCAM_UNIT=phonelink-webcam
+WEBCAM_LABEL="Phone camera"
+WEBCAM_FACING_FILE="$STATE_DIR/webcam-facing"
+
+webcam_device() {
+  local d
+  for d in /sys/class/video4linux/video*; do
+    [[ $(cat "$d/name" 2>/dev/null) == "$WEBCAM_LABEL" ]] && { printf '/dev/%s\n' "${d##*/}"; return 0; }
+  done
+  return 1
+}
+
+webcam_facing() { local f; f=$(cat "$WEBCAM_FACING_FILE" 2>/dev/null || true); echo "${f:-front}"; }
+
+webcam_active() { systemctl --user -q is-active "$WEBCAM_UNIT.service" 2>/dev/null; }
+
+webcam_on() {
+  local facing="$1" dev serial extra=()
+  need scrcpy adb
+  have systemd-run || die "the webcam runs as a systemd user service, and systemd-run is missing"
+  dev=$(webcam_device) || die "there is no \"$WEBCAM_LABEL\" device yet: run  sudo ./setup.sh  once (it installs v4l2loopback)"
+  serial=$(require_device)
+  printf '%s\n' "$facing" >"$WEBCAM_FACING_FILE"
+  # Extra scrcpy flags for a camera that comes out sideways or mirrored, e.g.
+  # PHONELINK_WEBCAM_ARGS="--orientation=90" or "--orientation=flip0".
+  read -ra extra <<<"${PHONELINK_WEBCAM_ARGS-}"
+  systemctl --user stop "$WEBCAM_UNIT.service" 2>/dev/null || true
+  systemctl --user reset-failed "$WEBCAM_UNIT.service" 2>/dev/null || true
+  # 720p30: plenty for a call, light on Wi-Fi. (scrcpy refuses --max-size with
+  # --camera-size, so the phone is asked for the size itself.)
+  systemd-run --user --quiet --collect --unit="$WEBCAM_UNIT" \
+    scrcpy -s "$serial" --video-source=camera --camera-facing="$facing" \
+      --camera-size=1280x720 --camera-fps=30 \
+      --no-audio --no-window --v4l2-sink="$dev" "${extra[@]}"
+  sleep 3
+  webcam_active || die "the camera stream stopped -- see: journalctl --user -u $WEBCAM_UNIT"
+  ok "phone $facing camera is now the webcam \"$WEBCAM_LABEL\" ($dev)"
+}
+
+webcam_off() { systemctl --user stop "$WEBCAM_UNIT.service" 2>/dev/null || true; ok "phone webcam off"; }
+
+cmd_webcam() {
+  case "${1-status}" in
+    front|back) webcam_on "$1" ;;
+    on)         webcam_on "$(webcam_facing)" ;;
+    off)        webcam_off ;;
+    toggle)     if webcam_active; then webcam_off; else webcam_on "$(webcam_facing)"; fi ;;
+    status)
+      local dev
+      dev=$(webcam_device || echo "none -- run sudo ./setup.sh once")
+      printf '  %-20s %s\n' "phone webcam" "$(webcam_active && echo "on ($(webcam_facing) camera)" || echo off)"
+      printf '  %-20s %s\n' "device" "$dev" ;;
+    *) die "usage: phonelink webcam front|back|on|off|toggle|status" ;;
+  esac
+}
+
 cmd_toasts() {
   case "${1-status}" in
     on)     toasts_on ;;
@@ -831,6 +895,7 @@ main() {
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
     mouse)         shift; cmd_mouse "$@" ;;
+    webcam|camera) shift; cmd_webcam "$@" ;;
     mouse-daemon)  shift; cmd_mouse_daemon "$@" ;;
     app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;

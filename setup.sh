@@ -25,6 +25,23 @@ step "Installing packages"
 #   sshfs          mounts the phone's storage for the Photos window
 pacman -S --needed --noconfirm kdeconnect scrcpy android-tools android-udev python-gobject gtk4 libadwaita gtk4-layer-shell sshfs
 
+step "A virtual webcam for the phone's camera (v4l2loopback)"
+#   v4l2loopback-dkms  a camera device other apps can open; phonelink webcam
+#                      fills it from the phone. dkms builds it for this kernel,
+#                      which needs the kernel's headers package installed.
+pacman -S --needed --noconfirm dkms v4l2loopback-dkms
+printf 'v4l2loopback\n' >/etc/modules-load.d/phonelink-webcam.conf
+# exclusive_caps: browsers only list a loopback device as a camera with it.
+printf 'options v4l2loopback card_label="Phone camera" exclusive_caps=1\n' \
+  >/etc/modprobe.d/phonelink-webcam.conf
+if grep -qx 'Phone camera' /sys/class/video4linux/video*/name 2>/dev/null; then
+  echo "    already loaded"
+elif lsmod | grep -q '^v4l2loopback'; then
+  echo "    v4l2loopback is loaded with other settings; it picks these up at the next boot"
+else
+  modprobe v4l2loopback && echo "    loaded"
+fi
+
 step "Adding $USER_NAME to the adbusers group (USB access without root)"
 if id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx adbusers; then
   echo "    already a member"

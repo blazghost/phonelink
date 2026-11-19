@@ -100,6 +100,10 @@ session dies with the process.
 - `setup.sh` installs `v4l2loopback-dkms` and a `modules-load.d` /
   `modprobe.d` entry (`card_label="Phone camera" exclusive_caps=1`).
 - Needs adb (`phonelink wifi`) and Android 12+.
+- As built (2026-11-19): a transient `systemd-run --user` unit rather than a
+  unit file; 720p30 asked of the phone itself (scrcpy refuses `--max-size`
+  with `--camera-size`); the device is found by its label, not a fixed
+  number, since the Surface's IPU6 already holds /dev/video0-63.
 
 ## Left to the builder
 
