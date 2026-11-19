@@ -616,6 +616,8 @@ phonelink — Android on your Linux desktop
 
   app               the phonelink window: Overview, Messages, Photos and Remote
   remote            a touchpad and keyboard for the phone (the window's Remote tab)
+  mouse on [edge]   share this mouse and keyboard: past the edge, they drive the phone
+  mouse off|status  stop sharing, or say whether it is on and at which edge
   status            what is connected right now, and what is missing
   mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
   desk [package]    run one app on its own virtual display; picks with fzf if omitted
@@ -751,6 +753,58 @@ toasts_status() {
     || printf '  %-20s %s\n' "position" "bottom-right"
 }
 
+# ---------------------------------------------------------- mouse sharing
+#
+# Push the pointer past a screen edge and it drives the phone: a resident
+# service (lib/phonelink-mouse.py) holding an InputCapture portal session.
+
+MOUSE_UNIT=phonelink-mouse.service
+MOUSE_EDGE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/phonelink/mouse-edge"
+
+cmd_mouse_daemon() { need python3; exec python3 "$SRC_DIR/lib/phonelink-mouse.py" "$@"; }
+
+mouse_on() {
+  local edge="${1-}"
+  have systemctl || die "mouse sharing runs as a systemd user service, and systemctl is missing"
+  if [[ -n $edge ]]; then
+    [[ $edge =~ ^(left|right|top|bottom)$ ]] || die "the edge is left, right, top or bottom"
+    mkdir -p "$(dirname "$MOUSE_EDGE_FILE")"
+    printf '%s\n' "$edge" >"$MOUSE_EDGE_FILE"
+  fi
+  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir"
+  install -m 644 "$SRC_DIR/integration/$MOUSE_UNIT" "$unit_dir/$MOUSE_UNIT"
+  systemctl --user daemon-reload
+  systemctl --user enable -q "$MOUSE_UNIT"
+  # Restart, not just start: a new edge or new code only lands on a restart.
+  systemctl --user restart "$MOUSE_UNIT"
+  sleep 1
+  systemctl --user -q is-active "$MOUSE_UNIT" \
+    || die "mouse sharing did not stay up -- see: journalctl --user -u $MOUSE_UNIT"
+  ok "mouse sharing on: push the pointer past the $(mouse_edge) edge (Ctrl+Alt+Esc brings it back)"
+}
+
+mouse_status() {
+  local active enabled
+  active=$(systemctl --user is-active "$MOUSE_UNIT" 2>/dev/null || true)
+  enabled=$(systemctl --user is-enabled "$MOUSE_UNIT" 2>/dev/null || true)
+  [[ $enabled == enabled || $enabled == disabled ]] || enabled="not installed"
+  printf '  %-20s %s (%s)\n' "mouse sharing" "${active:-inactive}" "$enabled"
+  printf '  %-20s %s\n' "screen edge" "$(mouse_edge)"
+}
+
+mouse_edge() { local e; e=$(cat "$MOUSE_EDGE_FILE" 2>/dev/null || true); echo "${e:-left}"; }
+
+cmd_mouse() {
+  case "${1-status}" in
+    on)     shift; mouse_on "$@" ;;
+    off)    systemctl --user disable -q --now "$MOUSE_UNIT" 2>/dev/null || true
+            ok "mouse sharing off" ;;
+    status) mouse_status ;;
+    *)      die "usage: phonelink mouse on [left|right|top|bottom] | off | status" ;;
+  esac
+}
+
 cmd_toasts() {
   case "${1-status}" in
     on)     toasts_on ;;
@@ -776,6 +830,8 @@ main() {
     reply|r)       shift; cmd_reply "$@" ;;
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
+    mouse)         shift; cmd_mouse "$@" ;;
+    mouse-daemon)  shift; cmd_mouse_daemon "$@" ;;
     app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
     remote|touchpad) shift; cmd_remote "$@" ;;

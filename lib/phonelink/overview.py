@@ -6,7 +6,7 @@ window calls it on a worker thread and draws the result on the main loop.
 
 from . import kdeconnect as kde, mpris
 
-PAGES = ("overview", "messages", "photos", "remote")
+PAGES = ("overview", "messages", "photos", "remote", "settings")
 BARS = "▂▄▆█"
 
 

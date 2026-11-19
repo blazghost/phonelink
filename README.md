@@ -54,6 +54,7 @@ plain bash and works on any Linux with the four tools installed.
 ```
 phonelink app               the window: Overview, Messages, Photos and Remote
 phonelink remote            a touchpad and keyboard for the phone
+phonelink mouse on [edge]   share this mouse and keyboard with the phone
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -99,6 +100,25 @@ remotecontrol and remotekeyboard plugins, which need two things on the phone:
 KDE Connect's *Remote input* accessibility permission for the pointer, and
 *KDE Connect Remote Keyboard* picked as the keyboard for typing (the tab says
 whether it is). Pointer speed is `SPEED` in `lib/phonelink/remote_page.py`.
+
+**Mouse sharing** (`phonelink mouse on [left|right|top|bottom]`, or the switch
+on the Settings tab): push the pointer past that edge of the screen and it
+carries on onto the phone, keyboard included. Move it back past the phone's
+edge to bring it home, or press **Ctrl+Alt+Esc**. It runs as the
+`phonelink-mouse` user service, holding an InputCapture portal session; if it
+stops, the compositor gives the pointer straight back. The phone needs the
+same Remote input permission as the touchpad.
+
+KDE Connect has a plugin for this (*Share input devices*), but on Hyprland it
+never captures anything: it sends the portal a barrier id of the wrong D-Bus
+type, and xdg-desktop-portal-hyprland refuses it. phonelink does the capture
+itself and drives the phone with the Remote tab's calls instead.
+
+The phone never reports where its pointer is, so the way home is reckoned: the
+pointer is pinned against the phone's edge as it arrives, and phonelink counts
+how far it has moved since. If it comes home too early or too late, set
+`PHONELINK_SHARE_SPAN` (the phone's width in pixels, 1080 by default) with
+`systemctl --user edit phonelink-mouse`.
 
 ## Messages: texts with photos and video
 
