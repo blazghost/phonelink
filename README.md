@@ -55,7 +55,7 @@ plain bash and works on any Linux with the four tools installed.
 phonelink app               the window: Overview, Messages, Photos and Remote
 phonelink remote            a touchpad and keyboard for the phone
 phonelink mouse on [edge]   share this mouse and keyboard with the phone
-phonelink webcam front|back the phone's camera as a webcam; off to stop
+phonelink webcam front|back offer "Phone camera"; the phone's camera comes on with an app
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -117,24 +117,27 @@ itself and drives the phone with the Remote tab's calls instead.
 
 The phone never reports where its pointer is, so the way home is reckoned: the
 pointer is pinned against the phone's edge as it arrives, and phonelink counts
-how far it has moved since. If it comes home too early or too late, set
-`PHONELINK_SHARE_SPAN` (the phone's width in pixels, 1080 by default) with
-`systemctl --user edit phonelink-mouse`.
+how far it has moved since, across the phone's real screen -- read over adb,
+held upright or sideways. Without adb it guesses 1080 pixels; to pin it by
+hand, set `PHONELINK_SHARE_SPAN` with `systemctl --user edit phonelink-mouse`.
 
 ## Webcam: the phone's camera
 
 `phonelink webcam front` (or `back`, the Webcam tile, or the Settings tab)
-makes the phone's camera a webcam called **Phone camera** that Meet, Zoom, OBS
-or a browser can pick like any other. `phonelink webcam off` stops it. It is
-scrcpy's camera mode (Android 12+) writing 720p at 30 fps into a
-v4l2loopback device, over the same adb connection as `phonelink mirror`, so
-`phonelink wifi` first if the cable is out.
+offers a webcam called **Phone camera** that Meet, Zoom, OBS or a browser can
+pick like any other, from then on, at every login. The phone's camera only
+comes on while an app is actually reading it: the `phonelink-webcam` service
+keeps the device listed with a black frame a second, hears from the driver when
+an app starts or stops, and starts or stops scrcpy's camera mode (Android 12+,
+720p at 30 fps) to match. `phonelink webcam off` stops offering it. It uses the
+same adb connection as `phonelink mirror`, so `phonelink wifi` first if the
+cable is out.
 
 Android gives the camera to anything that outranks a shell process, and on a
 Samsung that includes face unlock (each time the phone wakes), Smart Stay
 (the front camera, every twenty seconds) and the Camera app. When one of them
-takes it, the webcam drops and comes back by itself a few seconds later;
-`phonelink webcam status` says "waiting for the camera" meanwhile. For a long
+takes it mid-call, the picture drops and comes back by itself a few seconds
+later; `phonelink webcam status` says "waiting for the camera" meanwhile. For a long
 call on the front camera, turn Smart Stay off (Settings → Advanced features →
 Motions and gestures → Keep screen on while viewing).
 

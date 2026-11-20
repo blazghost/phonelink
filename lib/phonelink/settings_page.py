@@ -25,7 +25,6 @@ FACINGS = ("front", "back")
 
 
 def active(unit):
-    """Running, or (the webcam) waiting a moment to take the phone's camera back."""
     state = subprocess.run(["systemctl", "--user", "is-active", unit],
                            capture_output=True, text=True, check=False).stdout.strip()
     return state in ("active", "activating")
@@ -64,10 +63,10 @@ class SettingsPage(Adw.Bin):
 
         webcam = Adw.PreferencesGroup(
             title="Phone camera as webcam",
-            description="The phone's camera shows up as \"Phone camera\" in Meet, Zoom, OBS or a "
-                        "browser. Needs the phone connected over adb (phonelink wifi) and the "
-                        "virtual camera from sudo ./setup.sh.")
-        self.webcam = Adw.SwitchRow(title="Use the phone as a webcam", active=active(WEBCAM_UNIT))
+            description="Offers \"Phone camera\" to Meet, Zoom, OBS and browsers. The phone's "
+                        "camera only comes on while an app is using it. Needs the phone over "
+                        "adb (phonelink wifi) and the virtual camera from sudo ./setup.sh.")
+        self.webcam = Adw.SwitchRow(title="Offer the phone as a webcam", active=active(WEBCAM_UNIT))
         self.webcam.connect("notify::active", lambda *_: self.apply_webcam())
         webcam.add(self.webcam)
         self.facing = Adw.ComboRow(title="Camera",

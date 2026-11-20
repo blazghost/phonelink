@@ -224,7 +224,7 @@ BarWidget {
       } else if (mouse.button === Qt.MiddleButton) {
         root.bar.run(root.quoted(root.program) + " kde restart")
       } else {
-        root.bar.run(root.quoted(root.program) + " messages")
+        root.bar.run(root.quoted(root.program) + " app")
       }
       poll.running = true
     }

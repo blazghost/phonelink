@@ -7,12 +7,14 @@ needs nothing installed.
 """
 
 import os
+import errno
 import struct
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
@@ -344,6 +346,33 @@ class Saving(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual("IMG (2).jpg", second.name)
         self.assertTrue(first.exists())
+
+
+class DeadMount(unittest.TestCase):
+    """A mount whose sshfs died answers everything with ENOTCONN."""
+
+    def test_a_live_or_missing_point_is_not_dead(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(photos.dead(tmp))
+            self.assertFalse(photos.dead(os.path.join(tmp, "nope")))
+
+    def test_enotconn_is_dead(self):
+        gone = OSError(errno.ENOTCONN, "Transport endpoint is not connected")
+        with mock.patch.object(photos.os, "stat", side_effect=gone):
+            self.assertTrue(photos.dead("/run/user/1000/x"))
+
+    def test_a_dead_mount_is_lifted_and_a_live_one_left_alone(self):
+        with mock.patch.object(photos, "mount_point", return_value="/run/user/1000/x"), \
+                mock.patch.object(photos.shutil, "which", return_value="/usr/bin/fusermount3"), \
+                mock.patch.object(photos.subprocess, "run") as run:
+            with mock.patch.object(photos, "dead", return_value=True):
+                self.assertTrue(photos.clear_dead_mount("x"))
+            run.assert_called_once()
+            self.assertEqual(run.call_args[0][0], ["fusermount3", "-uz", "/run/user/1000/x"])
+            run.reset_mock()
+            with mock.patch.object(photos, "dead", return_value=False):
+                self.assertFalse(photos.clear_dead_mount("x"))
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
