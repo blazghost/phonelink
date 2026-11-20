@@ -53,6 +53,8 @@ block() {
     added)    note "$label: added (backup: $backup)" ;;
     updated)  note "$label: updated to this version (backup: $backup)" ;;
     migrated) note "$label: replaced the older rule (backup: $backup)" ;;
+    removed)  note "$label: removed (backup: $backup)" ;;
+    absent)   rm -f "$target.bak.$TS"; skip "$label: already gone" ;;
     *)        rm -f "$target.bak.$TS"; skip "$label: $result" ;;
   esac
 }
@@ -129,6 +131,8 @@ block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-panel.lua.snippet"
   "phonelink reply panel (float)" 'o.window("^(org\\.omarchy\\.phonelink)$"'
 block "$HYPR_DIR/hyprland.lua" "$SRC_DIR/integration/hyprland-messages.lua.snippet" \
   "phonelink window (opaque)" 'o.window("^(org\\.omarchy\\.phonelink\\.messages)$"'
+# The Photos window became a tab of that one; its own rule is retired.
+block "$HYPR_DIR/hyprland.lua" --remove "old Photos window rule" photos
 
 step "Bar widgets"
 # A plugin directory of its own under ~/.config/omarchy/plugins, the way every
@@ -170,7 +174,7 @@ elif ! have omarchy-shell; then
   skip "the Omarchy shell is not installed — skipped"
 else
   install_plugin phonelink.phone \
-    "Phone: battery, signal and waiting messages; click for Messages" \
+    "Phone: battery, signal and waiting messages; click for the phonelink window" \
     --section right --before omarchy.bluetooth
   # Left of the phone, so the track reads before the status glyphs. It takes
   # no room at all while nothing is playing.

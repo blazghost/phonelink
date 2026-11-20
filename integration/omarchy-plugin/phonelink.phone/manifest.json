@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Phone",
-    "description": "Battery, cellular signal and how many conversations are waiting; click to open Messages",
+    "description": "Battery, cellular signal and how many conversations are waiting; click to open the phonelink window",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",

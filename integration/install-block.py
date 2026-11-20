@@ -18,9 +18,14 @@ the text that identifies the old rule with --legacy, and the statement it
 belongs to (comments above it, brackets balanced below it) is replaced by the
 new block, wherever in the file it sits.
 
+A block phonelink no longer ships is taken out the same way, by name:
+
+    install-block.py <target> --remove NAME
+
     install-block.py <target> <snippet> [--legacy TEXT ...]
 
-Prints what it did: added, updated, migrated, current, or missing.
+Prints what it did: added, updated, migrated, current, removed, absent, or
+missing.
 """
 
 import re
@@ -114,15 +119,31 @@ def find_legacy(lines, name, texts):
     return start, end
 
 
+def remove(target, name):
+    """Take the named block out, markers and all; nothing else in the file moves."""
+    lines = target.read_text().splitlines(keepends=True)
+    found = find_block(lines, name)
+    if not found:
+        print("absent")
+        return 0
+    start, end, _version = found
+    del lines[start:end + 1]
+    target.write_text("".join(lines))
+    print("removed")
+    return 0
+
+
 def main(argv):
     if len(argv) < 3:
         sys.exit(__doc__.strip().splitlines()[-3].strip())
-    target, snippet = Path(argv[1]), Path(argv[2])
-    legacy = [a for a in argv[3:] if a != "--legacy"]
-
-    if not target.is_file():
+    if not Path(argv[1]).is_file():
         print("missing")
         return 0
+    if argv[2] == "--remove" and len(argv) > 3:
+        return remove(Path(argv[1]), argv[3])
+
+    target, snippet = Path(argv[1]), Path(argv[2])
+    legacy = [a for a in argv[3:] if a != "--legacy"]
 
     name, version, block = snippet_block(snippet)
     lines = target.read_text().splitlines(keepends=True)

@@ -172,5 +172,21 @@ class Block(unittest.TestCase):
         self.assertEqual(text.count('o.window("^(demo)$"'), 1)
 
 
+    # -- retiring
+
+    def test_a_retired_block_is_taken_out_and_nothing_else(self):
+        target = self.write("hyprland.lua", "-- mine before\n")
+        self.run_tool(target, self.v1)
+        with open(target, "a") as out:
+            out.write("-- mine after\n")
+        self.assertEqual(self.run_tool(target, "--remove", "demo"), "removed")
+        self.assertEqual(target.read_text(), "-- mine before\n-- mine after\n")
+
+    def test_removing_what_is_not_there(self):
+        target = self.write("hyprland.lua", "-- mine\n")
+        self.assertEqual(self.run_tool(target, "--remove", "demo"), "absent")
+        self.assertEqual(target.read_text(), "-- mine\n")
+
+
 if __name__ == "__main__":
     unittest.main()
