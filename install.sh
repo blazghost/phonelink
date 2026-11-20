@@ -215,6 +215,17 @@ if command -v systemctl >/dev/null 2>&1 \
   fi
 fi
 
+# The webcam likewise, only when it is already offered.
+if command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user -q is-enabled phonelink-webcam.service 2>/dev/null; then
+  step "Phone webcam"
+  if "$SRC_DIR/phonelink" webcam on >/dev/null 2>&1; then
+    note "restarted: \"Phone camera\" comes on when an app opens it"
+  else
+    skip "could not restart it — run: phonelink webcam on"
+  fi
+fi
+
 if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   step "Reloading Hyprland"
   hyprctl reload >/dev/null && note "reloaded"
