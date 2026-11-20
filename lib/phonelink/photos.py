@@ -29,10 +29,12 @@ Videos are never fetched for a picture: a frame would mean the whole file.
 They still open, save and drag.
 """
 
+import errno
 import os
 import re
 import shutil
 import struct
+import subprocess
 from pathlib import Path
 
 import gi
@@ -106,6 +108,34 @@ def mount_point(device_id):
         return ""
 
 
+def dead(point):
+    """Is `point` a mount whose sshfs has gone? Anything that touches it says so."""
+    try:
+        os.stat(point)
+        return False
+    except OSError as exc:
+        return exc.errno == errno.ENOTCONN
+
+
+def clear_dead_mount(device_id):
+    """Lift a mount whose sshfs died, so KDE Connect can mount the phone again.
+
+    When sshfs goes away (the phone dropped off the network, the daemon was
+    restarted) the mount point can stay behind, answering every read with
+    "Transport endpoint is not connected". KDE Connect then reports the phone
+    mounted, mounts nothing, and the camera roll reads as empty. A lazy
+    unmount is how anyone would clear it by hand; this does it first.
+    """
+    point = mount_point(device_id) or os.path.join(GLib.get_user_runtime_dir(), device_id)
+    if not dead(point):
+        return False
+    for tool in ("fusermount3", "fusermount"):
+        if shutil.which(tool):
+            subprocess.run([tool, "-uz", point], capture_output=True, timeout=10, check=False)
+            return True
+    return False
+
+
 def mount(device_id, timeout=MOUNT_TIMEOUT):
     """Mount the phone's storage. Returns (mount point, error message).
 
@@ -114,6 +144,7 @@ def mount(device_id, timeout=MOUNT_TIMEOUT):
     """
     if not have_sshfs():
         return "", "sshfs isn't installed — sudo pacman -S sshfs"
+    clear_dead_mount(device_id)
     try:
         ok = kde.call(_sftp(device_id), SFTP_IFACE, "mountAndWait", None, timeout).unpack()[0]
     except GLib.Error as exc:
