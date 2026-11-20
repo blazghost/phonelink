@@ -22,7 +22,9 @@ bottom; `phonelink mouse on right` writes it).
 
 import os
 import secrets
+import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from gi.repository import Gio, GLib
@@ -35,6 +37,8 @@ except ImportError:  # older PyGObject: the GLib.unix_* spelling below still wor
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from phonelink import ei, kdeconnect as kde, remote, share  # noqa: E402
+
+PHONELINK = str(Path(__file__).resolve().parent.parent / "phonelink")
 
 PORTAL, PATH = "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop"
 IFACE = "org.freedesktop.portal.InputCapture"
@@ -68,7 +72,8 @@ class Mouse:
         self.keyboard = None
         self.receiver = None
         span = os.environ.get("PHONELINK_SHARE_SPAN", "")
-        self.span = int(span) if span.isdigit() else None
+        self.span = int(span) if span.isdigit() else None  # set by hand: always wins
+        self.screen = None  # the phone's (width, height) as held, once adb has said
         for name in ("Activated", "Deactivated", "Disabled", "ZonesChanged"):
             self.bus.signal_subscribe(PORTAL, IFACE, name, PATH, None,
                                       Gio.DBusSignalFlags.NONE, self.on_signal)
@@ -113,6 +118,32 @@ class Mouse:
         add_fd(GLib.PRIORITY_DEFAULT, self.receiver.fd, GLib.IOCondition.IN,
                lambda *_: self.receiver.dispatch() or True)
         self.arm()
+        self.measure()
+
+    def measure(self):
+        """Ask the phone, over adb, how big its screen is and which way up.
+
+        On a worker thread, so a crossing never waits on adb; until it answers
+        (or with no adb at all) the guess in share.SPAN stands in.
+        """
+        def work():
+            try:
+                serial = subprocess.run([PHONELINK, "adb-serial"], capture_output=True,
+                                        text=True, timeout=20).stdout.strip()
+                if not serial:
+                    return
+                adb = ["adb", "-s", serial, "shell"]
+                size = subprocess.run(adb + ["wm", "size"], capture_output=True,
+                                      text=True, timeout=10).stdout
+                turn = subprocess.run(adb + ["dumpsys window displays | grep -m1 mRotation"],
+                                      capture_output=True, text=True, timeout=10).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                return
+            if screen := share.parse_screen(size, turn):
+                if screen != self.screen:
+                    log(f"phone screen {screen[0]}x{screen[1]} as held")
+                self.screen = screen
+        threading.Thread(target=work, daemon=True).start()
 
     def arm(self):
         """Fetch the screen layout, put the barrier on its edge, and enable capture."""
@@ -157,7 +188,8 @@ class Mouse:
             return
         did = self.device["id"]
         self.active = True
-        self.handoff = share.Handoff(self.edge, self.span)
+        self.handoff = share.Handoff(self.edge, self.span or share.span_for(self.edge, self.screen))
+        self.measure()  # for next time: the phone may be turned by then
         self.carry = [0.0, 0.0]
         remote.move(did, *share.pin_move(self.edge))
         GLib.timeout_add_seconds(2, self.watch)

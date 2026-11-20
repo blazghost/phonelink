@@ -117,9 +117,9 @@ itself and drives the phone with the Remote tab's calls instead.
 
 The phone never reports where its pointer is, so the way home is reckoned: the
 pointer is pinned against the phone's edge as it arrives, and phonelink counts
-how far it has moved since. If it comes home too early or too late, set
-`PHONELINK_SHARE_SPAN` (the phone's width in pixels, 1080 by default) with
-`systemctl --user edit phonelink-mouse`.
+how far it has moved since, across the phone's real screen -- read over adb,
+held upright or sideways. Without adb it guesses 1080 pixels; to pin it by
+hand, set `PHONELINK_SHARE_SPAN` with `systemctl --user edit phonelink-mouse`.
 
 ## Webcam: the phone's camera
 

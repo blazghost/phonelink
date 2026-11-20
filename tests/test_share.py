@@ -99,6 +99,29 @@ class Escape(unittest.TestCase):
         self.assertEqual(keys.modifiers(), (True, False, False))
 
 
+class Screen(unittest.TestCase):
+    def test_physical_size_upright(self):
+        self.assertEqual(share.parse_screen("Physical size: 1440x3120\n", "mRotation=ROTATION_0"),
+                         (1440, 3120))
+
+    def test_an_override_wins(self):
+        text = "Physical size: 1440x3120\nOverride size: 1080x2340\n"
+        self.assertEqual(share.parse_screen(text, "mRotation=0"), (1080, 2340))
+
+    def test_sideways_swaps(self):
+        self.assertEqual(share.parse_screen("Physical size: 1440x3120", "mRotation=ROTATION_90"),
+                         (3120, 1440))
+        self.assertEqual(share.parse_screen("Physical size: 1440x3120", "mRotation=3"), (3120, 1440))
+
+    def test_nonsense_is_none(self):
+        self.assertIsNone(share.parse_screen("error: device offline", ""))
+
+    def test_span_follows_the_edge(self):
+        self.assertEqual(share.span_for("left", (1440, 3120)), 1440)
+        self.assertEqual(share.span_for("top", (1440, 3120)), 3120)
+        self.assertEqual(share.span_for("right", None), share.SPAN["right"])
+
+
 class EdgeFile(unittest.TestCase):
     def test_default_and_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp, \

@@ -914,6 +914,7 @@ main() {
     mouse)         shift; cmd_mouse "$@" ;;
     webcam|camera) shift; cmd_webcam "$@" ;;
     mouse-daemon)  shift; cmd_mouse_daemon "$@" ;;
+    adb-serial)    need adb; adb_pick ;;  # for phonelink's own services
     app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;
     remote|touchpad) shift; cmd_remote "$@" ;;

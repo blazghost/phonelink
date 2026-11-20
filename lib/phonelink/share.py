@@ -9,6 +9,7 @@ edge brings the pointer home. Ctrl+Alt+Esc always does.
 """
 
 import os
+import re
 from pathlib import Path
 
 # evdev codes, as libei reports them.
@@ -38,9 +39,9 @@ def read_edge():
 # edge, which is how it gets pinned there.
 PIN = 10000
 
-# How far the phone's pointer can travel across, in its pixels. Android does
-# not say, so this is a guess at a phone held upright; a pointer that comes
-# home too early or too late wants this nudged (PHONELINK_SHARE_SPAN).
+# How far the phone's pointer can travel across, in its pixels, when the
+# phone can't be asked (no adb): a guess at a phone held upright. With adb the
+# real size is read (parse_screen); PHONELINK_SHARE_SPAN overrides both.
 SPAN = {"left": 1080, "right": 1080, "top": 2340, "bottom": 2340}
 
 # Which way is "back towards this screen" on the phone, per edge.
@@ -61,6 +62,28 @@ def barrier(edge, zones):
         return (x, y, x + w - 1, y)
     x, y, w, h = max(boxes, key=lambda b: b[1] + b[3])
     return (x, y + h, x + w - 1, y + h)
+
+
+def parse_screen(wm_size, rotation):
+    """(width, height) of the phone's screen as it is held, or None.
+
+    `wm_size` is `adb shell wm size` (an override, if set, is what the pointer
+    moves in), `rotation` anything carrying `mRotation=` from `dumpsys window`.
+    """
+    sizes = dict(re.findall(r"(Physical|Override) size: (\d+x\d+)", wm_size or ""))
+    size = sizes.get("Override") or sizes.get("Physical")
+    if not size:
+        return None
+    w, h = (int(n) for n in size.split("x"))
+    turned = re.search(r"mRotation=(?:ROTATION_)?(90|270|1|3)\b", rotation or "")
+    return (h, w) if turned else (w, h)
+
+
+def span_for(edge, screen):
+    """The distance across the phone along the way home, from parse_screen()."""
+    if not screen:
+        return SPAN[edge]
+    return screen[0] if edge in ("left", "right") else screen[1]
 
 
 def pin_move(edge):
