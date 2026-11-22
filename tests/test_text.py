@@ -81,6 +81,15 @@ class Package(unittest.TestCase):
     def test_short_internal_id(self):
         self.assertEqual(kde.package_of({"internalId": "0"}), "")
 
+    def test_a_name_that_is_not_a_package_is_dropped(self):
+        # internalId is whatever the paired device sent, and the package goes
+        # on to `phonelink desk <package>`: a shell word must never get through.
+        for bad in ("com.x;touch /tmp/p", "com.x' ;id;'", "$(id)", "com", "1com.x", "com..x",
+                    "com.x y", "-c.x"):
+            self.assertEqual(kde.package_of({"internalId": f"0|{bad}|1||2"}), "", bad)
+        self.assertEqual(kde.package_of({"internalId": "0|org.thoughtcrime.securesms|1||2"}),
+                         "org.thoughtcrime.securesms")
+
 
 class FriendlyError(unittest.TestCase):
     def test_dismissed_notification(self):

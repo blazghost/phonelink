@@ -30,7 +30,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from phonelink import kdeconnect as kde, mpris, overview, theme, widgets  # noqa: E402
+from phonelink import history, kdeconnect as kde, mpris, overview, sms, theme, widgets  # noqa: E402
 from phonelink import messages_page, photos_page, remote_page, settings_page  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.app"
@@ -103,8 +103,14 @@ class OverviewPage(Adw.Bin):
         box.append(self.build_tiles())
         box.append(self.build_media())
         box.append(self.build_notes())
+        box.append(self.build_history())
         clamp = Adw.Clamp(maximum_size=820, child=box)
         self.set_child(Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=clamp))
+        # Files dropped anywhere on the page go to the phone, as `phonelink send`.
+        # Only here: the Messages tab takes a drop as an attachment instead.
+        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        drop.connect("drop", self.on_drop)
+        self.add_controller(drop)
 
     # -- the phone
 
@@ -136,6 +142,19 @@ class OverviewPage(Adw.Bin):
             button.connect("clicked", lambda _b, c=command: self.run(c))
             grid.append(button)
         return grid
+
+    def on_drop(self, _target, files, _x, _y):
+        paths = [f.get_path() for f in files.get_files() if f.get_path()]
+        if not paths:
+            return False
+        try:
+            subprocess.Popen([PHONELINK, "send", *paths], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            self.toast(f"Couldn't send: {exc.strerror}")
+            return False
+        self.toast(f"Sending {len(paths)} file{'s' if len(paths) != 1 else ''} to the phone")
+        return True
 
     def run(self, command):
         try:
@@ -239,6 +258,43 @@ class OverviewPage(Adw.Bin):
         card.append(self.notes)
         return card
 
+    # -- what came before
+
+    def build_history(self):
+        self.search = Gtk.SearchEntry(placeholder_text="Search past notifications", hexpand=True)
+        self.search.connect("search-changed", lambda *_: self.draw_history())
+        self.past = Gtk.Box(orientation=VERTICAL, spacing=14)
+        card = Gtk.Box(orientation=VERTICAL, spacing=12)
+        card.add_css_class("hub-card")
+        card.append(widgets.label("History", "card-head"))
+        card.append(self.search)
+        card.append(self.past)
+        self.draw_history()
+        return card
+
+    def draw_history(self):
+        query = self.search.get_text().strip()
+        hits = history.search(query, history.load(), limit=30 if query else 5)
+        widgets.clear(self.past)
+        for e in hits:
+            text = Gtk.Box(orientation=VERTICAL, hexpand=True)
+            text.append(widgets.label(f"{e.get('app', '')} · {sms.when(e.get('time', 0) * 1000)}",
+                                      "note-app"))
+            if e.get("title"):
+                text.append(widgets.label(e["title"], "note-title", ellipsize=Pango.EllipsizeMode.END))
+            if e.get("text"):
+                text.append(widgets.label(e["text"], "note-text", wrap=True, lines=2,
+                                          ellipsize=Pango.EllipsizeMode.END, selectable=True))
+            row = Gtk.Box(spacing=12)
+            row.append(widgets.avatar(e.get("app", ""), 38))
+            row.append(text)
+            self.past.append(row)
+        if not hits:
+            empty = ("Nothing kept matches" if query else
+                     "Notifications are kept here as they arrive, while phonelink toasts are on"
+                     if history.enabled() else "History is off: phonelink history on")
+            self.past.append(widgets.label(empty, "note-text"))
+
     def note_row(self, note):
         text = Gtk.Box(orientation=VERTICAL, hexpand=True)
         text.append(widgets.label(note["app"], "note-app"))
@@ -280,6 +336,8 @@ class OverviewPage(Adw.Bin):
             self.notes.append(self.note_row(note))
         if not notes:
             self.notes.append(widgets.label("Nothing new on the phone", "note-text"))
+        if not self.search.get_text():
+            self.draw_history()  # what just arrived is history too
 
     # -- keeping it current
 

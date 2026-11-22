@@ -34,6 +34,10 @@ BarWidget {
   property string network: ""
   property int waiting: 0
   property var waitingFrom: []
+  property bool webcam: false           // the phone's camera is streaming to "Phone camera"
+  property bool mic: false              // an app is recording from "Phone microphone"
+  // On air: camera, microphone, or both.
+  readonly property string onAir: (webcam ? "󰄀" : "") + (mic ? "󰍬" : "")
 
   // The bar checks this before showing the tooltip it was asked for.
   property bool tooltipHovered: false
@@ -43,7 +47,7 @@ BarWidget {
 
   // A phone glyph while all is well, a warning triangle when KDE Connect
   // itself is the problem -- the same signal the toast service gives.
-  readonly property string glyph: broken ? "󰀦" : (connected ? "󰄜" : "󰄞")
+  readonly property string glyph: dropZone.containsDrag ? "󰕒" : (broken ? "󰀦" : (connected ? "󰄜" : "󰄞"))
   readonly property color normalColor: bar ? bar.barForeground : Color.foreground
   readonly property color dimColor: Qt.darker(normalColor, 1.55)
   readonly property color urgentColor: bar ? bar.urgent : Color.urgent
@@ -51,6 +55,7 @@ BarWidget {
   readonly property string batteryText: battery >= 0 ? battery + "%" : ""
   readonly property string signalText: bars >= 0 ? "▂".repeat(Math.max(1, bars)) : ""
   readonly property string tooltipText: {
+    if ((webcam || mic) && !connected) return "Phone camera or microphone in use"
     if (state === "gone") return "KDE Connect isn't running"
     if (state === "hung") return "KDE Connect isn't answering"
     if (state === "away") return "No phone reachable"
@@ -60,6 +65,8 @@ BarWidget {
     if (bars >= 0) parts.push((network || "signal") + " " + bars + "/4")
     if (waiting > 0) parts.push(waiting + (waiting === 1 ? " conversation waiting" : " conversations waiting"))
     if (waitingFrom.length > 0) parts.push(waitingFrom.join(", "))
+    if (webcam) parts.push("phone camera in use")
+    if (mic) parts.push("phone microphone in use")
     return parts.join(" · ")
   }
 
@@ -88,6 +95,8 @@ BarWidget {
     root.network = String(data.network || "")
     root.waiting = (typeof data.waiting === "number") ? data.waiting : 0
     root.waitingFrom = (data.from instanceof Array) ? data.from : []
+    root.webcam = data.webcam === true
+    root.mic = data.mic === true
   }
 
   implicitWidth: vertical ? barSize : row.implicitWidth + Style.space(14)
@@ -116,6 +125,16 @@ BarWidget {
     visible: !root.vertical
     anchors.centerIn: parent
     spacing: Style.space(6)
+
+    Text {
+      // On air: the phone's camera is feeding an app on this computer.
+      anchors.verticalCenter: parent.verticalCenter
+      visible: root.onAir !== ""
+      text: root.onAir
+      color: root.urgentColor
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+    }
 
     Text {
       anchors.verticalCenter: parent.verticalCenter
@@ -182,6 +201,15 @@ BarWidget {
 
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
+      visible: root.onAir !== ""
+      text: root.onAir
+      color: root.urgentColor
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+    }
+
+    Text {
+      anchors.horizontalCenter: parent.horizontalCenter
       text: root.glyph
       color: root.broken ? root.urgentColor : (root.connected ? root.normalColor : root.dimColor)
       font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -205,6 +233,25 @@ BarWidget {
       font.family: root.bar ? root.bar.fontFamily : Style.font.family
       font.pixelSize: Style.font.caption
       font.bold: true
+    }
+  }
+
+  // Files dropped on the phone go to it: `phonelink send`, the glyph turning
+  // into an upload arrow while something is held over it.
+  DropArea {
+    id: dropZone
+    anchors.fill: parent
+    keys: ["text/uri-list"]
+    onDropped: function(drop) {
+      if (!root.bar || !drop.hasUrls) return
+      var paths = []
+      for (var i = 0; i < drop.urls.length; i++) {
+        var url = String(drop.urls[i])
+        if (url.indexOf("file://") === 0) paths.push(root.quoted(decodeURIComponent(url.slice(7))))
+      }
+      if (paths.length === 0) return
+      root.bar.run(root.quoted(root.program) + " send " + paths.join(" "))
+      drop.accept(Qt.CopyAction)
     }
   }
 

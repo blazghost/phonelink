@@ -69,9 +69,11 @@ def facing():
 
 def status(text):
     """One line for `phonelink webcam status` to read."""
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:  # never a guessable name in /tmp, which anyone could plant
+        return
     try:
-        (runtime / "phonelink-webcam").write_text(text + "\n")
+        (Path(runtime) / "phonelink-webcam").write_text(text + "\n")
     except OSError:
         pass
 
@@ -96,6 +98,17 @@ def camera(device):
         ["scrcpy", "-s", serial, "--video-source=camera", f"--camera-facing={side}",
          f"--camera-size={WIDTH}x{HEIGHT}", "--camera-fps=30", "--no-audio", "--no-window",
          f"--v4l2-sink={device}", *shlex.split(os.environ.get("PHONELINK_WEBCAM_ARGS", ""))])
+
+
+def on_air(side):
+    """Say so on the desktop: any app may open the device, and the phone's
+    camera comes on with no other sign here. The bar shows it while it lasts."""
+    try:
+        subprocess.Popen(["notify-send", "-a", "phonelink", "-i", "camera-web",
+                          "Phone camera is on", f"An app is using the phone's {side} camera"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 def stop(proc):
@@ -148,6 +161,7 @@ def main():
                         writer = standby(device)
                     else:
                         status(f"streaming {facing()}")
+                        on_air(facing())
                 elif phone and phone.poll() is not None:
                     # Taken back by the phone (face unlock, the Camera app) or a
                     # dropped link: try again shortly if anyone is still watching.

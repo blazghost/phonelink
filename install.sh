@@ -215,6 +215,17 @@ if command -v systemctl >/dev/null 2>&1 \
   fi
 fi
 
+# The walk-away lock likewise, only when it is already on.
+if command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user -q is-enabled phonelink-autolock.service 2>/dev/null; then
+  step "Walk-away lock"
+  if "$SRC_DIR/phonelink" autolock on >/dev/null 2>&1; then
+    note "restarted: locks $(cat "${XDG_CONFIG_HOME:-$HOME/.config}/phonelink/autolock-after" 2>/dev/null || echo 60)s after the phone goes"
+  else
+    skip "could not restart it — run: phonelink autolock on"
+  fi
+fi
+
 # The webcam likewise, only when it is already offered.
 if command -v systemctl >/dev/null 2>&1 \
     && systemctl --user -q is-enabled phonelink-webcam.service 2>/dev/null; then

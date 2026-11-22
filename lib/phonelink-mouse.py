@@ -25,6 +25,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from gi.repository import Gio, GLib
@@ -36,7 +37,7 @@ except ImportError:  # older PyGObject: the GLib.unix_* spelling below still wor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from phonelink import ei, kdeconnect as kde, remote, share  # noqa: E402
+from phonelink import ei, kdeconnect as kde, lock, remote, share  # noqa: E402
 
 PHONELINK = str(Path(__file__).resolve().parent.parent / "phonelink")
 
@@ -45,6 +46,8 @@ IFACE = "org.freedesktop.portal.InputCapture"
 CAP_KEYBOARD, CAP_POINTER = 1, 2
 # Scroll: a wheel notch is 120 in discrete units; a touchpad's smooth scroll
 # comes in pixels. The phone takes "notches". Tune if scrolling feels off.
+# How often the lock screen is looked for while the phone has the keyboard.
+LOCK_POLL_S = 0.2
 NOTCH = 120
 PX_PER_NOTCH = 15
 DEBUG = os.environ.get("PHONELINK_MOUSE_DEBUG", "") not in ("", "0")
@@ -77,6 +80,13 @@ class Mouse:
         for name in ("Activated", "Deactivated", "Disabled", "ZonesChanged"):
             self.bus.signal_subscribe(PORTAL, IFACE, name, PATH, None,
                                       Gio.DBusSignalFlags.NONE, self.on_signal)
+        # A locker that goes through logind says so; Omarchy's is asked (guard).
+        try:
+            Gio.bus_get_sync(Gio.BusType.SYSTEM, None).signal_subscribe(
+                "org.freedesktop.login1", "org.freedesktop.login1.Session", "Lock", None, None,
+                Gio.DBusSignalFlags.NONE, lambda *_: self.on_locked())
+        except GLib.Error:
+            pass
 
     # -- the portal
 
@@ -181,6 +191,10 @@ class Mouse:
             GLib.idle_add(lambda: sys.exit(1))
 
     def begin(self):
+        if lock.locked():
+            log("the screen is locked: giving the pointer straight back")
+            self.release()
+            return
         self.device = kde.phone()
         if not self.device:
             log("no phone reachable: giving the pointer straight back")
@@ -193,6 +207,28 @@ class Mouse:
         self.carry = [0.0, 0.0]
         remote.move(did, *share.pin_move(self.edge))
         GLib.timeout_add_seconds(2, self.watch)
+        self.guard()
+
+    def guard(self):
+        """While the phone has the keyboard, keep an eye out for the lock screen.
+
+        The compositor keeps sending keys here while the screen locks, so a
+        password typed at the lock screen would be typed into the phone --
+        into whatever chat happens to be open. The pointer comes home first.
+        """
+        def work():
+            while self.active:
+                if lock.locked():
+                    GLib.idle_add(self.on_locked)
+                    return
+                time.sleep(LOCK_POLL_S)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_locked(self):
+        if self.active:
+            log("the screen locked: giving the pointer back")
+            self.release()
+        return False
 
     def watch(self):
         """While the phone has the pointer: if the phone goes, the pointer comes back."""
@@ -229,8 +265,6 @@ class Mouse:
         if kind == ei.KEYBOARD_KEY:
             code = E.ei_event_keyboard_get_key(event)
             pressed = E.ei_event_keyboard_get_key_is_press(event)
-            if DEBUG:
-                log(f"key {code} {'down' if pressed else 'up'}")
             self.on_key(code, pressed)
             return
         if not self.active:
@@ -272,7 +306,8 @@ class Mouse:
             return
         args = remote.key_args(name, text, *self.keys.modifiers())
         if DEBUG:
-            log(f"typed {name!r} {text!r} -> {args}")
+            # Special keys by name; typed text never, not even its keysym.
+            log(f"key -> {'(text)' if text else args}")
         if args:
             remote.key(self.device["id"], *args)
 

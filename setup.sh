@@ -54,16 +54,27 @@ step "Reloading udev rules so a plugged-in phone is picked up now"
 udevadm control --reload-rules
 udevadm trigger
 
-step "Opening the KDE Connect ports in ufw"
+step "Opening the KDE Connect ports in ufw, to local networks only"
 # KDE Connect discovers and talks over this range; with ufw active and the range
 # closed, pairing just silently never finds anything. This is KDE's documented
-# requirement, not a guess.
-if ufw status | grep -q '1714:1764'; then
-  echo "    already open"
-else
-  ufw allow 1714:1764/tcp comment 'KDE Connect'
-  ufw allow 1714:1764/udp comment 'KDE Connect'
-fi
+# requirement, not a guess. Only from private and tailnet addresses, though: a
+# laptop handed a public address -- or any IPv6 one -- must not be answering the
+# internet on them. PHONELINK_TRUSTED_NETS narrows it further, say to the home
+# LAN alone (sudo PHONELINK_TRUSTED_NETS=192.168.2.0/24 ./setup.sh), at the cost
+# of the phone's own hotspot, whose subnet Android picks at random.
+TRUSTED_NETS=${PHONELINK_TRUSTED_NETS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10}
+# What earlier versions opened, to every address: taken back out, highest
+# number first so the ones below keep theirs.
+mapfile -t open_rules < <(ufw status numbered \
+  | awk -F'[][]' '/1714:1764/ && /ALLOW IN +Anywhere/ {print $2 + 0}' | sort -rn)
+for n in "${open_rules[@]}"; do ufw --force delete "$n" >/dev/null; done
+(( ${#open_rules[@]} )) && echo "    closed the old rule open to every address"
+for net in $TRUSTED_NETS; do
+  for proto in tcp udp; do
+    ufw allow proto "$proto" from "$net" to any port 1714:1764 comment 'KDE Connect' >/dev/null
+  done
+done
+echo "    open to: $TRUSTED_NETS"
 
 cat <<'EOS'
 

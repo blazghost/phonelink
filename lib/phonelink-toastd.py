@@ -11,8 +11,10 @@ The card is sized and themed like Omarchy's own notifications (width, padding,
 corner rounding, the active-border gradient, the countdown bar, Do Not
 Disturb), so it belongs on the desktop; the layout is Phone Link's. KDE
 Connect's plain popup for the same notification is switched off by
-`phonelink toasts on`, so each message pops once. Calls, pairing requests and
-the rest keep KDE Connect's normal popups.
+`phonelink toasts on`, so each message pops once. Calls get a toast too -- a
+ringing one with Silence and Decline, a missed one with Text back -- and
+KDE Connect's own call popups are switched off with the rest. Pairing
+requests, pings and low battery keep KDE Connect's normal popups.
 
 gtk4-layer-shell has to be loaded before GTK, so run this through
 `phonelink toastd`, which sets LD_PRELOAD.
@@ -41,8 +43,8 @@ from gi.repository import Gtk4LayerShell as LayerShell  # noqa: E402
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from phonelink import apps, kdeconnect as kde, theme, widgets  # noqa: E402
-from phonelink import helper  # noqa: E402
+from phonelink import apps, calls, kdeconnect as kde, theme, widgets  # noqa: E402
+from phonelink import helper, history  # noqa: E402
 from phonelink.helper import HELPER  # noqa: E402
 
 APP_ID = "org.omarchy.phonelink.toasts"
@@ -55,6 +57,11 @@ MAX_TOASTS = 3
 HEALTH_KEY = "phonelink:health"
 HEALTH_EVERY = 60   # seconds between checks while KDE Connect is answering
 HEALTH_RETRY = 15   # ... and while it is not, so the toast clears soon after
+TELEPHONY_IFACE = "org.kde.kdeconnect.device.telephony"
+# KDE Connect says when a call rings and when it is answered, but not when the
+# caller gives up; a ringing toast that hears nothing more goes after this.
+RING_MAX_S = 60
+PHONELINK = str(HERE.parent / "phonelink")
 VERTICAL = Gtk.Orientation.VERTICAL
 # Omarchy's normal-urgency lifetime; the countdown pauses while you hover or type.
 DURATION_MS = int(os.environ.get("PHONELINK_TOAST_MS", "8000"))
@@ -277,7 +284,9 @@ def demo_notes():
                  "Call me when you land. We need to talk.", True),
             # The health card, so its look can be checked without hanging the
             # daemon. Its button does nothing here.
-            health_note(kde.HUNG, lambda toast: None)]
+            health_note(kde.HUNG, lambda toast: None),
+            dict(calls.call_note("demo", "ringing", "+15550100", "Camina Drummer"),
+                 path="demo:call")]
 
 
 # ---------------------------------------------------------------------- toast
@@ -361,12 +370,14 @@ class Toast:
             opener.add_css_class("flat")
             opener.connect("clicked", lambda *_: (apps.open_in_app(note["package"], note["app"]), self.close()))
             header.append(opener)
-        if action := note.get("action"):
-            label, on_click = action
+        actions = list(note.get("actions") or ())
+        if note.get("action"):
+            actions.insert(0, note["action"])
+        for label, on_click in actions:
             button = Gtk.Button(label=label, focus_on_click=False, valign=Gtk.Align.CENTER,
                                 sensitive=not note.get("working"))
             button.add_css_class("flat")
-            button.connect("clicked", lambda *_: on_click(self))
+            button.connect("clicked", lambda _b, f=on_click: f(self))
             header.append(button)
         close = Gtk.Button(icon_name="window-close-symbolic", focus_on_click=False,
                            tooltip_text="Dismiss", valign=Gtk.Align.CENTER)
@@ -476,7 +487,8 @@ class Toast:
         if self.closed:
             return
         self.closed = True
-        if clear_on_phone and not helper.keep_on_phone() and not self.note.get("sticky"):
+        if (clear_on_phone and not helper.keep_on_phone() and not self.note.get("sticky")
+                and self.key.startswith("/")):  # a phone notification, not a call or a card
             helper.dismiss(self.note["path"])
         self.win.destroy()
         self.daemon.forget(self)
@@ -555,6 +567,8 @@ class Daemon:
             # own `ready` fires on each (re)show, so that is the one to follow.
             kde.BUS.signal_subscribe(sender, kde.NOTIF_IFACE, "ready", None, None,
                                     Gio.DBusSignalFlags.NONE, self.on_ready)
+            kde.BUS.signal_subscribe(sender, TELEPHONY_IFACE, "callReceived", None, None,
+                                    Gio.DBusSignalFlags.NONE, self.on_call)
             print("phonelink toasts: listening for phone notifications", flush=True)
             # kdeconnectd has hung outright: on the bus, answering nothing, with
             # toasts, replies and Messages all quiet and no sign why. Watch for
@@ -562,6 +576,7 @@ class Daemon:
             GLib.timeout_add_seconds(5, self.check_health)
         elif self.mode == "demo":
             for i, note in enumerate(demo_notes()):
+                note = self.wire(note) if "buttons" in note else note
                 GLib.timeout_add(350 * i + 1, lambda n=note: self.show(n) or False)
         else:
             note = find_note(arg)
@@ -642,6 +657,58 @@ class Daemon:
             return
         self.refresh(objpath)
 
+    def on_call(self, _conn, _sender, path, _iface, _member, params):
+        if not (path.startswith(DEVICES) and path.endswith("/telephony")):
+            return
+        event, number, name = params.unpack()
+        device = path.split("/")[-2]
+        note = calls.call_note(device, event, number, name)
+        if note is None:
+            if toast := self.find(f"call:{device}"):
+                toast.close()  # picked up, here or on the phone
+            return
+        if dnd_on():
+            return
+        self.show(self.wire(note))
+        if note["sticky"]:
+            GLib.timeout_add_seconds(RING_MAX_S, lambda: self.stop_ringing(note["path"]))
+
+    def stop_ringing(self, key):
+        if (toast := self.find(key)) and toast.note.get("sticky"):
+            toast.close()
+        return False
+
+    def wire(self, note):
+        """A call note's buttons, as callbacks that run phonelink."""
+        def runner(args):
+            return lambda toast: self.run_phonelink(toast, args)
+        return dict(note, actions=[(label, runner(args)) for label, args in note["buttons"]])
+
+    def run_phonelink(self, toast, args):
+        """`phonelink <args>` without waiting; the toast closes, or says why not."""
+        if self.mode == "demo":
+            toast.close()
+            return
+        try:
+            proc = Gio.Subprocess.new([PHONELINK, *args], Gio.SubprocessFlags.STDOUT_SILENCE
+                                      | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as exc:
+            toast.update(dict(toast.note, text=exc.message))
+            return
+
+        def finished(p, result):
+            try:
+                _, _, err = p.communicate_utf8_finish(result)
+            except GLib.Error as exc:
+                err = exc.message
+            if p.get_successful():
+                toast.close()
+                return
+            lines = [ln for ln in (err or "").splitlines() if ln.startswith("error:")]
+            toast.update(dict(toast.note, text=(lines or ["That didn't work"])[0]
+                              .removeprefix("error: ")))
+        proc.communicate_utf8_async(None, None, finished)
+
     def on_ready(self, _conn, _sender, path, _iface, _member, _params):
         if path.startswith(DEVICES) and "/notifications/" in path:
             self.refresh(path)
@@ -655,6 +722,10 @@ class Daemon:
         note = read_note(objpath)
         if not note:
             return
+        try:
+            history.record(note)  # Do Not Disturb included: that is when it is wanted
+        except OSError as exc:
+            print(f"phonelink toasts: could not keep history: {exc}", file=sys.stderr, flush=True)
         if shown := next((t for t in self.toasts if t.key == objpath), None):
             shown.update(note)
         elif not note["silent"] and not dnd_on():
