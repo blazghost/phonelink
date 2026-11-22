@@ -16,6 +16,12 @@ set -euo pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/phonelink"
 DEVICE_FILE="$STATE_DIR/adb-device"
+# ro.serialno of the phone, written only when it is known to be the phone (USB,
+# the address KDE Connect vouches for, a TLS pairing). adb checks this computer's
+# key on the phone's side, but nothing checks the phone: on another network the
+# remembered address can be anybody's, and push, the webcam and the rest would
+# talk to them.
+SERIAL_FILE="$STATE_DIR/adb-serialno"
 mkdir -p "$STATE_DIR"
 
 # Resolved through the symlink in ~/.local/bin, so the helpers next to the real
@@ -112,6 +118,34 @@ reexec_panel() {
 
 adb_serials() { adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}'; }
 
+adb_serialno() { adb -s "$1" shell getprop ro.serialno 2>/dev/null | tr -d '\r'; }
+
+# remember_serial <adb serial>: note which phone this is, from a trusted path.
+remember_serial() {
+  local got; got=$(adb_serialno "$1")
+  [[ -n $got ]] && printf '%s\n' "$got" >"$SERIAL_FILE"
+  return 0
+}
+
+# adb_connect_checked <ip:port> [trust]: connect, and keep it only if it is the
+# phone. With "trust" (an address KDE Connect vouches for) a phone not seen
+# before is remembered; without, an unknown or different one is let go.
+adb_connect_checked() {
+  local ep="$1" trust="${2-}" got want
+  adb connect "$ep" 2>&1 | grep -qiE 'connected to' || return 1
+  got=$(adb_serialno "$ep")
+  want=$(cat "$SERIAL_FILE" 2>/dev/null || true)
+  if [[ -n $got && $got == "$want" ]]; then return 0; fi
+  if [[ -z $want && -n $trust && -n $got ]]; then
+    printf '%s\n' "$got" >"$SERIAL_FILE"
+    return 0
+  fi
+  warn "$ep did not answer as your phone${want:+ (serial ${got:-unknown})} -- disconnected.
+  Plug the phone in and run phonelink wifi to set it up again."
+  adb disconnect "$ep" >/dev/null 2>&1 || true
+  return 1
+}
+
 # Echo one usable serial. Prefers a live device; falls back to reconnecting the
 # wireless endpoint we last saw, which is the common case after a reboot.
 adb_pick() {
@@ -130,13 +164,13 @@ adb_pick() {
   # -- adb in tcpip mode answers on the same address. Tried before the remembered
   # endpoint, which is stale on any other network.
   ip=$(kde_ip)
-  if [[ -n $ip ]] && adb connect "$ip:5555" 2>&1 | grep -qiE 'connected to'; then
+  if [[ -n $ip ]] && adb_connect_checked "$ip:5555" trust; then
     printf '%s\n' "$ip:5555"; return 0
   fi
   if [[ -s $DEVICE_FILE ]]; then
     remembered=$(<"$DEVICE_FILE")
     info "nothing attached — trying remembered $remembered"
-    if adb connect "$remembered" 2>&1 | grep -qiE 'connected to'; then
+    if adb_connect_checked "$remembered"; then
       printf '%s\n' "$remembered"; return 0
     fi
   fi
@@ -234,6 +268,7 @@ cmd_status() {
     if (( ${#serials[@]} )); then
       local s
       for s in "${serials[@]}"; do
+        [[ $s == *:5555 ]] && printf '  %swarn:%s adb listens on port 5555 on every network the phone joins: phonelink wifi off closes it\n' "$c_yel" "$c_off"
         local model batt
         model=$(adb -s "$s" shell getprop ro.product.model 2>/dev/null | tr -d '\r' || true)
         batt=$(adb -s "$s" shell dumpsys battery 2>/dev/null | awk -F': ' '/ level/{print $2; exit}' | tr -d '\r' || true)
@@ -272,14 +307,20 @@ desk_needs_setup() {
     2>/dev/null) || true
   [[ $choice == setup ]] || return 0
   have omarchy-launch-or-focus-tui || die "run in a terminal: phonelink wifi"
-  printf -v q '%q' "$SELF"
-  exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink \
-    "bash -c '$q wifi && setsid -f $q desk $pkg >/dev/null 2>&1; printf \"\\n[any key to close]\"; read -rsn1'"
+  # Every word quoted, as in reexec_tty: omarchy-launch-or-focus evals this, and
+  # the package can come from a notification another device sent.
+  printf -v q '%q wifi && setsid -f %q desk %q >/dev/null 2>&1' "$SELF" "$SELF" "$pkg"
+  q+="; printf '\n[any key to close]'; read -rsn1"
+  exec omarchy-launch-or-focus-tui --app-id=org.omarchy.phonelink "bash -c $(printf '%q' "$q")"
 }
+
+# Dot-separated Java identifiers, which is all Android accepts as a package.
+valid_package() { [[ $1 =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]]; }
 
 cmd_desk() {
   need scrcpy adb
   local serial size app args=()
+  [[ -z ${1-} ]] || valid_package "$1" || die "not an Android package name: $1"
   if [[ ! -t 1 ]] && ! adb_pick >/dev/null 2>&1; then
     desk_needs_setup "${1-}"
     return 0
@@ -305,6 +346,7 @@ list_apps() {
 cmd_apps() { reexec_tty apps; need scrcpy adb; list_apps "$(require_device)"; }
 
 cmd_wifi() {
+  [[ ${1-} == off ]] && { wifi_off; return; }
   reexec_tty wifi
   need adb
   adb start-server >/dev/null 2>&1 || true
@@ -313,6 +355,7 @@ cmd_wifi() {
   existing=$(adb_serials | grep -m1 ':' || true)
   if [[ -n $existing ]]; then
     printf '%s\n' "$existing" > "$DEVICE_FILE"
+    [[ -s $SERIAL_FILE ]] || remember_serial "$existing"
     info "already wireless: $existing"
     return 0
   fi
@@ -321,6 +364,7 @@ cmd_wifi() {
   usb=$(adb_serials | grep -m1 -v ':' || true)
   if [[ -n $usb ]]; then
     info "found $usb over USB — switching it to wireless"
+    remember_serial "$usb"
     ip=$(adb -s "$usb" shell ip route 2>/dev/null | tr -d '\r' | awk '/wlan[0-9]/ && /src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
     [[ -n $ip ]] || ip=$(adb -s "$usb" shell ip -4 addr show wlan0 2>/dev/null | tr -d '\r' | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')
     [[ -n $ip ]] || ip=$(kde_ip)   # on its own hotspot the phone has no wlan route
@@ -337,6 +381,19 @@ cmd_wifi() {
   On the phone's own hotspot Android won't turn Wireless debugging on: plug in
   USB and run phonelink wifi instead (once per phone restart)."
   cmd_pair
+}
+
+# adb in tcpip mode listens on port 5555 on every network the phone joins, until
+# it restarts. This puts it back on USB only.
+wifi_off() {
+  need adb
+  local s n=0
+  while read -r s; do
+    adb -s "$s" usb >/dev/null 2>&1 && (( ++n ))
+    [[ $s == *:* ]] && adb disconnect "$s" >/dev/null 2>&1
+  done < <(adb_serials)
+  (( n )) || die "no phone over adb to switch off -- it stops listening by itself when it restarts"
+  ok "adb is off the network: the phone listens over USB only until phonelink wifi"
 }
 
 cmd_pair() {
@@ -367,6 +424,7 @@ EOS
   conn=$(adb mdns services 2>/dev/null | awk '/_adb-tls-connect/ {print $NF; exit}' || true)
   [[ -n $conn ]] || read -rp "connect IP:PORT (shown on the Wireless debugging screen): " conn
   adb connect "$conn" | sed 's/^/  /'
+  remember_serial "$conn"
   printf '%s\n' "$conn" > "$DEVICE_FILE"
   info "remembered $conn"
 }
@@ -388,6 +446,21 @@ cmd_send() {
     kdeconnect-cli -d "$dev" --share "$(realpath "$f")" && (( ++sent ))
   done
   (( sent )) && ok "sent $sent file(s) to the phone"
+}
+
+# The phone's own keys for a ringing call: a volume key silences the ringer and
+# the end-call key declines. KDE Connect has no way to say either over D-Bus.
+cmd_call() {
+  local key
+  case ${1-} in
+    silence) key=KEYCODE_VOLUME_DOWN ;;
+    decline) key=KEYCODE_ENDCALL ;;
+    *) die "usage: phonelink call silence|decline" ;;
+  esac
+  need adb
+  local serial
+  serial=$(adb_pick) || die "this needs the phone over adb: phonelink wifi"
+  adb -s "$serial" shell input keyevent "$key"
 }
 
 cmd_ring() { kdeconnect-cli -d "$(require_kde)" --ring && ok "ringing your phone"; }
@@ -620,11 +693,15 @@ phonelink — Android on your Linux desktop
   mouse off|status  stop sharing, or say whether it is on and at which edge
   webcam front|back "Phone camera": the phone's camera, on whenever an app opens it
   webcam off|status stop offering it, or say what it is doing
+  mic on|off|status "Phone microphone": the phone's mic, on whenever an app records
+  autolock on [s]   lock the desktop when the phone has been away s seconds (60)
+  autolock off|status
   status            what is connected right now, and what is missing
   mirror [args...]  mirror and control the phone screen (extra args go to scrcpy)
   desk [package]    run one app on its own virtual display; picks with fzf if omitted
   apps              list launchable app packages
   wifi              switch to / reconnect wireless adb, and remember it
+  wifi off          stop adb listening on the network (back to USB only)
   pair              Android 11+ wireless-debugging pairing walkthrough
   send <files...>   share files to the phone via KDE Connect
   pull <remote> [d] copy a file off the phone
@@ -647,7 +724,11 @@ phonelink — Android on your Linux desktop
                     reply box right in the popup (runs as a systemd user service)
   toasts status     whether they are running, and Do Not Disturb
   toasts demo       show sample toasts, to check the look
+  history [words]   search past phone notifications (the toasts keep the last 500)
+  history on|off|clear
   ring              make the phone ring
+  commands on|off|list  let the phone lock, screenshot, record, mute or suspend this computer
+  call silence|decline  silence or decline a ringing call (needs adb)
   clip              push the desktop clipboard to the phone
   kde               open KDE Connect (pairing, SMS, notification settings)
   kde restart       unstick KDE Connect when it stops answering
@@ -674,6 +755,22 @@ TOAST_UNIT=phonelink-toastd.service
 KDEC_UNIT="app-org.kde.kdeconnect.daemon@autostart.service"
 NOTIFYRC="${XDG_CONFIG_HOME:-$HOME/.config}/kdeconnect.notifyrc"
 NOTIFYRC_MARK='# >>> phonelink toasts'
+
+# unit_up <unit> <what>: install phonelink's copy of a user service, enable it,
+# and restart it -- restart, not start, since that is what makes new code or a
+# new setting land -- then check it stayed up.
+unit_up() {
+  local unit=$1 what=$2 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  have systemctl || die "$what runs as a systemd user service, and systemctl is missing"
+  mkdir -p "$unit_dir"
+  install -m 644 "$SRC_DIR/integration/$unit" "$unit_dir/$unit"
+  systemctl --user daemon-reload
+  systemctl --user enable -q "$unit"
+  systemctl --user restart "$unit"
+  sleep 1
+  systemctl --user -q is-active "$unit" \
+    || die "$what did not stay up -- see: journalctl --user -u $unit"
+}
 
 layer_shell_lib() {
   local f
@@ -704,24 +801,21 @@ restart_kdeconnect() {
 }
 
 toasts_on() {
-  have systemctl || die "phonelink toasts run as a systemd user service, and systemctl is missing"
   layer_shell_lib >/dev/null || die "gtk4-layer-shell is not installed: sudo pacman -S gtk4-layer-shell"
-  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  mkdir -p "$unit_dir"
-  install -m 644 "$SRC_DIR/integration/$TOAST_UNIT" "$unit_dir/$TOAST_UNIT"
-  systemctl --user daemon-reload
-  systemctl --user enable -q "$TOAST_UNIT"
-  # Restart, not just start: after an update this is what picks up new code.
-  systemctl --user restart "$TOAST_UNIT"
-  sleep 1
-  systemctl --user -q is-active "$TOAST_UNIT" \
-    || die "the toast daemon did not stay up -- see: journalctl --user -u $TOAST_UNIT"
+  unit_up "$TOAST_UNIT" "the toast daemon"
 
   # Only now that the toasts are confirmed running: silencing KDE Connect's own
   # popups first would leave phone notifications with no popup at all if the
   # daemon had failed.
-  if ! grep -qF "$NOTIFYRC_MARK" "$NOTIFYRC" 2>/dev/null; then
-    [[ -f $NOTIFYRC ]] && cp "$NOTIFYRC" "$NOTIFYRC.bak.$(date +%s)"
+  # Replaced whole when an update changed it, so new events are silenced too.
+  local want have
+  want=$(<"$SRC_DIR/integration/kdeconnect.notifyrc.snippet")
+  have=$(sed -n '/^# >>> phonelink toasts$/,/^# <<< phonelink toasts$/p' "$NOTIFYRC" 2>/dev/null || true)
+  if [[ $have != "$want" ]]; then
+    if [[ -f $NOTIFYRC ]]; then
+      cp "$NOTIFYRC" "$NOTIFYRC.bak.$(date +%s)"
+      sed -i '/^# >>> phonelink toasts$/,/^# <<< phonelink toasts$/d' "$NOTIFYRC"
+    fi
     cat "$SRC_DIR/integration/kdeconnect.notifyrc.snippet" >> "$NOTIFYRC"
     restart_kdeconnect
   fi
@@ -767,22 +861,12 @@ cmd_mouse_daemon() { need python3; exec python3 "$SRC_DIR/lib/phonelink-mouse.py
 
 mouse_on() {
   local edge="${1-}"
-  have systemctl || die "mouse sharing runs as a systemd user service, and systemctl is missing"
   if [[ -n $edge ]]; then
     [[ $edge =~ ^(left|right|top|bottom)$ ]] || die "the edge is left, right, top or bottom"
     mkdir -p "$(dirname "$MOUSE_EDGE_FILE")"
     printf '%s\n' "$edge" >"$MOUSE_EDGE_FILE"
   fi
-  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  mkdir -p "$unit_dir"
-  install -m 644 "$SRC_DIR/integration/$MOUSE_UNIT" "$unit_dir/$MOUSE_UNIT"
-  systemctl --user daemon-reload
-  systemctl --user enable -q "$MOUSE_UNIT"
-  # Restart, not just start: a new edge or new code only lands on a restart.
-  systemctl --user restart "$MOUSE_UNIT"
-  sleep 1
-  systemctl --user -q is-active "$MOUSE_UNIT" \
-    || die "mouse sharing did not stay up -- see: journalctl --user -u $MOUSE_UNIT"
+  unit_up "$MOUSE_UNIT" "mouse sharing"
   ok "mouse sharing on: push the pointer past the $(mouse_edge) edge (Ctrl+Alt+Esc brings it back)"
 }
 
@@ -818,7 +902,7 @@ cmd_mouse() {
 WEBCAM_UNIT=phonelink-webcam.service
 WEBCAM_LABEL="Phone camera"
 WEBCAM_FACING_FILE="$STATE_DIR/webcam-facing"
-WEBCAM_STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/phonelink-webcam"
+WEBCAM_STATE_FILE="${XDG_RUNTIME_DIR:-/run/user/$UID}/phonelink-webcam"
 
 webcam_device() {
   local d
@@ -837,20 +921,11 @@ cmd_webcam_daemon() { need python3 ffmpeg scrcpy adb; exec python3 "$SRC_DIR/lib
 webcam_on() {
   local facing="$1" dev
   need scrcpy adb ffmpeg
-  have systemctl || die "the webcam runs as a systemd user service, and systemctl is missing"
   dev=$(webcam_device) || die "there is no \"$WEBCAM_LABEL\" device yet: run  sudo ./setup.sh  once (it installs v4l2loopback)"
   printf '%s\n' "$facing" >"$WEBCAM_FACING_FILE"
-  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  mkdir -p "$unit_dir"
-  install -m 644 "$SRC_DIR/integration/$WEBCAM_UNIT" "$unit_dir/$WEBCAM_UNIT"
-  systemctl --user daemon-reload
-  systemctl --user enable -q "$WEBCAM_UNIT"
-  # Restart, not just start: new code only lands on a restart. The camera side
-  # is read each time an app starts reading, so a switch needs no restart, but
-  # one is harmless while nobody is watching.
-  systemctl --user restart "$WEBCAM_UNIT"
-  sleep 1
-  webcam_active || die "the webcam service did not stay up -- see: journalctl --user -u $WEBCAM_UNIT"
+  # The camera side is read each time an app starts reading, so a switch needs
+  # no restart, but one is harmless while nobody is watching.
+  unit_up "$WEBCAM_UNIT" "the webcam service"
   ok "\"$WEBCAM_LABEL\" ($dev) is ready: the phone's $facing camera comes on when an app opens it"
 }
 
@@ -887,6 +962,94 @@ cmd_webcam() {
   esac
 }
 
+# --------------------------------------------------------- walk-away lock
+#
+# The desktop locks once the phone has been out of reach for a while
+# (lib/phonelink-autolock.py). Opt-in: a phone whose Wi-Fi naps would lock a
+# desk it never left, which is what the delay is for.
+
+AUTOLOCK_UNIT=phonelink-autolock.service
+AUTOLOCK_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/phonelink/autolock-after"
+
+cmd_autolock_daemon() { need python3; exec python3 "$SRC_DIR/lib/phonelink-autolock.py" "$@"; }
+
+autolock_after() { local a; a=$(cat "$AUTOLOCK_FILE" 2>/dev/null || true); echo "${a:-60}"; }
+
+cmd_autolock() {
+  case "${1-status}" in
+    on)
+      if [[ -n ${2-} ]]; then
+        [[ $2 =~ ^[0-9]+$ ]] && (( $2 >= 15 )) || die "the delay is a number of seconds, 15 or more"
+        mkdir -p "$(dirname "$AUTOLOCK_FILE")"
+        printf '%s\n' "$2" >"$AUTOLOCK_FILE"
+      fi
+      unit_up "$AUTOLOCK_UNIT" "the walk-away lock"
+      ok "walk-away lock on: the screen locks $(autolock_after)s after the phone goes" ;;
+    off)
+      systemctl --user disable -q --now "$AUTOLOCK_UNIT" 2>/dev/null || true
+      ok "walk-away lock off" ;;
+    status)
+      printf '  %-20s %s\n' "walk-away lock" "$(systemctl --user is-active "$AUTOLOCK_UNIT" 2>/dev/null || true)"
+      printf '  %-20s %s\n' "locks after" "$(autolock_after)s away" ;;
+    *) die "usage: phonelink autolock on [seconds] | off | status" ;;
+  esac
+}
+
+# ------------------------------------------------------- phone microphone
+#
+# "Phone microphone": a PipeWire source the phone's mic feeds while an app
+# records from it (lib/phonelink-mic.py). Apart from the webcam, so a call with
+# the camera off still has sound.
+
+MIC_UNIT=phonelink-mic.service
+
+cmd_mic_daemon() { need python3 pactl scrcpy adb; exec python3 "$SRC_DIR/lib/phonelink-mic.py" "$@"; }
+
+cmd_mic() {
+  case "${1-status}" in
+    on)  need scrcpy adb pactl
+         unit_up "$MIC_UNIT" "the phone microphone"
+         ok "\"Phone microphone\" is ready: the phone's mic comes on when an app records from it" ;;
+    off) systemctl --user disable -q --now "$MIC_UNIT" 2>/dev/null || true
+         ok "phone microphone off -- \"Phone microphone\" is no longer offered" ;;
+    status)
+      local state=off
+      if systemctl --user -q is-active "$MIC_UNIT" 2>/dev/null; then
+        state=$(cat "${XDG_RUNTIME_DIR:-/run/user/$UID}/phonelink-mic" 2>/dev/null || echo standby)
+        [[ $state == on ]] && state="in use -- an app is recording from it" \
+          || state="ready -- comes on when an app records from it"
+      fi
+      printf '  %-20s %s\n' "phone microphone" "$state" ;;
+    *) die "usage: phonelink mic on|off|status" ;;
+  esac
+}
+
+# Desktop actions the phone can run -- lock, screenshot, screen recording, mute,
+# suspend -- through KDE Connect's runcommand plugin (lib/phonelink/commands.py).
+# A fixed list: nothing the phone sends ever becomes part of a command.
+cmd_commands() {
+  need python3
+  PYTHONPATH="$SRC_DIR/lib" python3 -m phonelink.commands "$@" || exit 1
+  case ${1-list} in
+    on)  ok "the phone can now lock, screenshot, record, mute and suspend this computer (KDE Connect -> Run command)" ;;
+    off) ok "phonelink's commands are gone from the phone; any of your own are kept" ;;
+  esac
+}
+
+# Every notification the toast service has seen, searchable (lib/phonelink/history.py):
+# the last 500, in ~/.local/state/phonelink/history.jsonl, readable by you alone.
+HISTORY_OFF="${XDG_CONFIG_HOME:-$HOME/.config}/phonelink/history-off"
+
+cmd_history() {
+  case ${1-} in
+    on)    rm -f "$HISTORY_OFF"; ok "notification history on: the last 500 are kept" ;;
+    off)   mkdir -p "$(dirname "$HISTORY_OFF")"; : >"$HISTORY_OFF"
+           ok "notification history off -- what is kept stays until: phonelink history clear" ;;
+    clear) rm -f "$STATE_DIR/history.jsonl"; ok "notification history cleared" ;;
+    *)     need python3; PYTHONPATH="$SRC_DIR/lib" exec python3 -m phonelink.history "$@" ;;
+  esac
+}
+
 cmd_toasts() {
   case "${1-status}" in
     on)     toasts_on ;;
@@ -909,13 +1072,20 @@ main() {
     pull)          shift; cmd_pull "$@" ;;
     push)          shift; cmd_push "$@" ;;
     ring|find)     shift; cmd_ring "$@" ;;
+    call)          shift; cmd_call "$@" ;;
+    commands)      shift; cmd_commands "$@" ;;
+    history)       shift; cmd_history "$@" ;;
     reply|r)       shift; cmd_reply "$@" ;;
     toasts|toast)  shift; cmd_toasts "$@" ;;
     toastd)        shift; cmd_toastd "$@" ;;
     mouse)         shift; cmd_mouse "$@" ;;
     webcam|camera) shift; cmd_webcam "$@" ;;
     webcam-daemon) shift; cmd_webcam_daemon "$@" ;;
+    mic|microphone) shift; cmd_mic "$@" ;;
+    mic-daemon)    shift; cmd_mic_daemon "$@" ;;
     mouse-daemon)  shift; cmd_mouse_daemon "$@" ;;
+    autolock)      shift; cmd_autolock "$@" ;;
+    autolock-daemon) shift; cmd_autolock_daemon "$@" ;;
     adb-serial)    need adb; adb_pick ;;  # for phonelink's own services
     app|window|open) shift; cmd_app "$@" ;;
     messages|texts) shift; cmd_messages "$@" ;;

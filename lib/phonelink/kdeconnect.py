@@ -243,6 +243,10 @@ def icon_path(props):
     return path if path and GLib.file_test(path, GLib.FileTest.IS_REGULAR) else ""
 
 
+# What Android accepts as a package name: dot-separated Java identifiers.
+PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
+
+
 def package_of(props):
     """The Android package behind a notification.
 
@@ -250,7 +254,10 @@ def package_of(props):
     exactly which app to open for the photos and videos a notification can't
     carry.
     """
-    return (props.get("internalId", "").split("|") + ["", ""])[1]
+    package = (props.get("internalId", "").split("|") + ["", ""])[1]
+    # The sending device writes internalId, and the name ends up on a command
+    # line: anything that is not a real Android package name is dropped.
+    return package if PACKAGE.fullmatch(package) else ""
 
 
 # ------------------------------------------------------------- notifications

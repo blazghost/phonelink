@@ -19,6 +19,7 @@ timeout, and a daemon that is wedged is reported as such rather than hung on.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,8 +64,28 @@ def snapshot():
     }
 
 
+def webcam_live():
+    """Is the phone's camera streaming to "Phone camera" right now?"""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    try:
+        return bool(runtime) and (Path(runtime) / "phonelink-webcam").read_text().startswith("streaming")
+    except OSError:
+        return False
+
+
+def mic_live():
+    """Is an app recording from "Phone microphone" right now?"""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    try:
+        return bool(runtime) and (Path(runtime) / "phonelink-mic").read_text().strip() == "on"
+    except OSError:
+        return False
+
+
 def main(argv):
     data = snapshot()
+    data["webcam"] = webcam_live()
+    data["mic"] = mic_live()
     indent = 2 if "--pretty" in argv else None
     json.dump(data, sys.stdout, indent=indent)
     sys.stdout.write("\n")

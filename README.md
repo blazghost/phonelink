@@ -47,6 +47,18 @@ Arch-based, and `setup.sh` assumes `pacman` and `ufw`. The desktop integration
 assumes [Omarchy](https://omarchy.org/); the `phonelink` command itself is
 plain bash and works on any Linux with the four tools installed.
 
+### What it opens up
+
+- **Firewall.** `setup.sh` opens KDE Connect's ports (1714–1764) only to
+  private and tailnet addresses — never to a public or IPv6 address — and
+  takes back the open-to-everyone rule earlier versions added.
+  `sudo PHONELINK_TRUSTED_NETS=192.168.2.0/24 ./setup.sh` narrows it to one
+  network, at the cost of the phone's own hotspot.
+- **adb.** `phonelink wifi` leaves the phone's adb listening on port 5555 on
+  every network it joins until it restarts; `phonelink status` warns while it
+  is, and `phonelink wifi off` closes it. phonelink remembers the phone's
+  serial number and drops a remembered address that answers as anything else.
+
 ## Use
 
 `SUPER + SHIFT + L` opens the Phone section of the Omarchy menu. From a shell:
@@ -56,6 +68,11 @@ phonelink app               the window: Overview, Messages, Photos and Remote
 phonelink remote            a touchpad and keyboard for the phone
 phonelink mouse on [edge]   share this mouse and keyboard with the phone
 phonelink webcam front|back offer "Phone camera"; the phone's camera comes on with an app
+phonelink mic on            offer "Phone microphone"; the phone's mic comes on with an app
+phonelink autolock on [s]   lock the desktop when the phone has been away s seconds
+phonelink commands on       let the phone lock, screenshot, record, mute or suspend this computer
+phonelink call silence|decline  silence or decline a ringing call (needs adb)
+phonelink history [words]   search past phone notifications
 phonelink reply             answer a phone notification from the desktop
 phonelink reply "on my way" straight to the newest one, no prompt
 phonelink messages          the phone's texts, with MMS photos and video
@@ -70,12 +87,15 @@ phonelink drop              LocalSend
 phonelink clip              push the clipboard to the phone
 phonelink ring              find my phone
 phonelink wifi              switch to / reconnect wireless adb, and remember it
+phonelink wifi off          stop adb listening on the network (USB only again)
 phonelink pair              Android 11+ wireless-debugging walkthrough
 phonelink pull <remote>     copy a file off the phone
 phonelink push <local>      copy a file onto the phone
 phonelink kde / sms         KDE Connect windows
 phonelink kde restart       unstick KDE Connect if it stops answering
 ```
+
+Drop files on the Overview page, or on the phone in the bar, to send them.
 
 `desk` is the one worth knowing about: it gives an app its own desktop-shaped
 display via scrcpy's virtual display, so the app is a normal window on your
@@ -145,6 +165,38 @@ The virtual device is the one root-only part: `sudo ./setup.sh` installs
 `v4l2loopback-dkms` and loads it at every boot. If the picture comes out
 sideways or mirrored, pass scrcpy a fix with `PHONELINK_WEBCAM_ARGS`, e.g.
 `PHONELINK_WEBCAM_ARGS="--orientation=90" phonelink webcam front`.
+
+While the phone's camera is feeding an app, the bar shows a red camera glyph,
+and a notification says so the moment it comes on: any app on this computer
+can open the device, and nothing else here would tell you.
+
+### The phone's microphone
+
+`phonelink mic on` (or the Settings tab) offers an input called **Phone
+microphone**, run the same way by the `phonelink-mic` service: a PipeWire
+source whose feed is the phone's mic, tuned for calls (echo cancelling, gain
+control), switched on only while an app records from it. It is separate from
+the camera on purpose — turning the camera off in a call keeps the sound. A
+notification and a microphone glyph in the bar say when it is live.
+`phonelink mic off` takes the source away.
+
+## Walk-away lock
+
+`phonelink autolock on [seconds]` locks the screen once the phone has been out
+of KDE Connect's reach for that long (60 by default, 15 at least). It only
+locks after the phone has been seen, once per departure, and never unlocks
+anything: unlocking at a desk the phone never reached does not lock it again.
+A KDE Connect that is restarting does not count as the phone leaving. If the
+phone's Wi-Fi naps, raise the delay. `phonelink autolock off` turns it off.
+
+## Desktop actions from the phone
+
+`phonelink commands on` gives KDE Connect's **Run command** on the phone a list
+of things it can do here: lock the computer, take a screenshot, start or stop a
+screen recording, mute, suspend. It is a fixed list — nothing the phone sends
+becomes part of a command — kept with ids of its own, so commands you added in
+KDE Connect's settings stay. `phonelink commands list` shows what the phone
+sees; `phonelink commands off` takes phonelink's away.
 
 ## Messages: texts with photos and video
 
@@ -412,8 +464,18 @@ clear of Omarchy's own toasts in the top-right. For top-right instead, add
 `Environment=PHONELINK_TOAST_POSITION=top-right` with
 `systemctl --user edit phonelink-toastd`.
 
-Only phone notifications change hands: KDE Connect's popups for calls, pairing
-requests, pings and low battery are untouched. The toasts run as a systemd user
+Calls get a toast too: a ringing call shows the caller with **Silence** and
+**Decline** (the phone's volume and end-call keys, over adb — `phonelink call
+silence|decline` from a keybind does the same), and a missed one offers **Text
+back**. KDE Connect's popups for pairing requests, pings and low battery are
+untouched.
+
+Every notification the toasts see — Do Not Disturb included — is also kept in
+a searchable history: the search box on the Overview, or `phonelink history
+<words>` in a terminal. The last 500 are kept, in
+`~/.local/state/phonelink/history.jsonl`, readable by you alone.
+`phonelink history off` stops keeping them and `phonelink history clear`
+empties it. The toasts run as a systemd user
 service (`phonelink-toastd`) that restarts if it crashes.
 `phonelink toasts status` reports on it, `phonelink toasts demo` previews the
 look with sample toasts, and `phonelink toasts off` gives KDE Connect its
