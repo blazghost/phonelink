@@ -25,6 +25,18 @@ SMS_APPS = {"com.samsung.android.messaging", "com.google.android.apps.messaging"
 DESKTOP_APPS = {"org.thoughtcrime.securesms": ("^signal$", "signal-desktop")}
 
 
+def without_layer_shell(preload):
+    """LD_PRELOAD minus gtk4-layer-shell, or None when nothing else is left.
+
+    The toast daemon needs the preload and keeps it once loaded, but anything
+    it starts inherits the variable. That drags GTK 4 into a GTK 3 app such as
+    Signal Desktop, and GTK aborts when it finds both in one process.
+    """
+    kept = [p for p in (preload or "").split(":")
+            if p and os.path.basename(p) != "libgtk4-layer-shell.so"]
+    return ":".join(kept) or None
+
+
 def desktop_command(package):
     """The argv that opens a package's desktop client, or None if it has none."""
     pattern, command = DESKTOP_APPS.get(package, (None, None))
