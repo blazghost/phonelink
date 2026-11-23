@@ -31,5 +31,18 @@ class DesktopCommand(unittest.TestCase):
             self.assertIsNone(apps.desktop_command("com.whatsapp"))
 
 
+class WithoutLayerShell(unittest.TestCase):
+    LIB = "/usr/lib/libgtk4-layer-shell.so"
+
+    def test_alone_is_dropped(self):
+        self.assertIsNone(apps.without_layer_shell(self.LIB))
+
+    def test_others_are_kept(self):
+        self.assertEqual(apps.without_layer_shell(f"{self.LIB}:/opt/x.so"), "/opt/x.so")
+
+    def test_unset(self):
+        self.assertIsNone(apps.without_layer_shell(None))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -803,6 +803,12 @@ def main(argv):
     if not LayerShell.is_supported():
         sys.exit("gtk4-layer-shell is not active: run through `phonelink toastd`, which "
                  "preloads it, on a compositor with wlr-layer-shell (Hyprland has it)")
+    # Loaded now; keep it out of everything the toasts launch (Signal crashed on it).
+    preload = apps.without_layer_shell(os.environ.get("LD_PRELOAD"))
+    if preload:
+        os.environ["LD_PRELOAD"] = preload
+    else:
+        os.environ.pop("LD_PRELOAD", None)
 
     # The resident daemon is single-instance; a preview or --show must still run
     # alongside it, so those opt out of uniqueness.
