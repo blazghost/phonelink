@@ -7,6 +7,7 @@ rest.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,16 +20,32 @@ PHONELINK = str(Path(__file__).resolve().parent.parent.parent / "phonelink")
 SMS_APPS = {"com.samsung.android.messaging", "com.google.android.apps.messaging",
             "com.android.mms", "com.android.messaging"}
 
+# Apps with a client of their own on this laptop: (window pattern, command).
+# Open raises that instead of running the phone's copy on a virtual display.
+DESKTOP_APPS = {"org.thoughtcrime.securesms": ("^signal$", "signal-desktop")}
+
+
+def desktop_command(package):
+    """The argv that opens a package's desktop client, or None if it has none."""
+    pattern, command = DESKTOP_APPS.get(package, (None, None))
+    if not command or not shutil.which(command):
+        return None
+    if shutil.which("omarchy-launch-or-focus"):
+        return ["omarchy-launch-or-focus", pattern, f"uwsm-app -- {command}"]
+    return [command]
+
 
 def open_in_app(package, name=""):
     """Open a notification's app on the desktop, for what the notification
-    can't carry: phonelink's Messages window for SMS/MMS, otherwise the Android
-    app itself on a scrcpy virtual display. For Signal, Messenger or WhatsApp
-    that is the only way to see the photos, videos and the rest of the thread.
+    can't carry: the app's own desktop client when this laptop has one (Signal),
+    phonelink's Messages window for SMS/MMS, otherwise the Android app itself
+    on a scrcpy virtual display. For Messenger or WhatsApp that is the only
+    way to see the photos, videos and the rest of the thread.
     """
     if not package:
         return
-    args = [PHONELINK, "messages"] if package in SMS_APPS else [PHONELINK, "desk", package]
+    args = (desktop_command(package)
+            or ([PHONELINK, "messages"] if package in SMS_APPS else [PHONELINK, "desk", package]))
     # The name lets a "needs setup" prompt say "Messenger", not com.facebook.orca.
     env = dict(os.environ, PHONELINK_APP_NAME=name) if name else None
     subprocess.Popen(args, env=env, start_new_session=True, stdin=subprocess.DEVNULL,
