@@ -333,6 +333,18 @@ cmd_desk() {
   fi
   args=(-s "$serial" --new-display="$size" --window-title="Phone desk")
   [[ -n $app ]] && args+=(--start-app="$app")
+  # Samsung keeps the virtual display in the phone's own power group, so while
+  # the phone dozes the desk sleeps too and the app never draws: a blank window.
+  # Wake it, and if it was asleep keep its own panel dark (--turn-screen-off).
+  # The lock screen dozes again after ~8s and a wake key doesn't reset that, so
+  # a no-op key counts as use every 4s until scrcpy ($$ after exec) exits.
+  if ! adb -s "$serial" shell dumpsys power 2>/dev/null | grep -q 'mWakefulness=Awake'; then
+    adb -s "$serial" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+    args+=(--turn-screen-off)
+  fi
+  ( while kill -0 $$ 2>/dev/null; do
+      adb -s "$serial" shell input keyevent KEYCODE_UNKNOWN >/dev/null 2>&1; sleep 4
+    done ) &
   info "new virtual display $size${app:+, launching $app}"
   exec scrcpy "${args[@]}"
 }
